@@ -1,0 +1,21 @@
+# Build output
+bin/
+*.o
+*.d
+*.a
+*.so
+
+# Runtime artifacts
+*.log
+core
+core.*
+vgcore.*
+
+# Tooling
+.cache/
+compile_commands.json
+
+# Editor
+*.swp
+*.swo
+*~
