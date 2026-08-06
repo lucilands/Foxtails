@@ -62,6 +62,7 @@ typedef struct {
     int mime_type;
     char *reason;
     char *content;
+    size_t content_len;
     char *location;
     time_t date;
 } http_response_t;

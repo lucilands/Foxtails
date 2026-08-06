@@ -184,21 +184,23 @@ void http_send_response(int fd, http_response_t response) {
     
     size_t header_len = 0;
     if (response.location) header_len = snprintf(header, 1024, "HTTP/1.1 %i %s\r\nDate: %s\r\nServer: Foxtails\r\nContent-Type: %s\r\nContent-Length: %lu\r\nLocation: %s\r\n\r\n",
-                                        response.code, response.reason, date, mime_type_str(response.mime_type), strlen(response.content), response.location);
+                                        response.code, response.reason, date, mime_type_str(response.mime_type), response.content_len, response.location);
     else header_len = snprintf(header, 1024, "HTTP/1.1 %i %s\r\nDate: %s\r\nServer: Foxtails\r\nContent-Type: %s\r\nContent-Length: %lu\r\n\r\n",
-                                        response.code, response.reason, date, mime_type_str(response.mime_type), strlen(response.content));
+                                        response.code, response.reason, date, mime_type_str(response.mime_type), response.content_len);
 
 
-    size_t response_len = header_len + strlen(response.content);
-    char *resp = malloc(header_len + strlen(response.content)+1);
+    // response.content may be arbitrary binary data (images, etc.) and isn't
+    // guaranteed to be NUL-terminated in a meaningful way, so we size and copy
+    // it by response.content_len rather than strlen().
+    size_t response_len = header_len + response.content_len;
+    char *resp = malloc(response_len + 1);
     if (!resp) {
         clog(CLOG_ERROR, "Failed to allocate memory for response (fd=%d)", fd);
         return;
     }
-    memset(resp, 0, response_len);
 
-    strncat(resp, header, header_len);
-    strncat(resp, response.content, strlen(response.content));
+    memcpy(resp, header, header_len);
+    memcpy(resp + header_len, response.content, response.content_len);
 
     ssize_t sent = send(fd, resp, response_len, 0);
     if (sent < 0) {

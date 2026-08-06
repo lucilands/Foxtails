@@ -25,10 +25,10 @@
 extern config_t config;
 extern route_table_t routes;
 
-#define NOT_IMPLEMENTED     (http_response_t) { .code = 501, .mime_type = MIME_TEXT_PLAIN, .reason = "Not Implemented", .content = "Not Implemented" }
-#define NOT_FOUND           (http_response_t) { .code = 404, .mime_type = MIME_TEXT_PLAIN, .reason = "Not Found", .content = "Not Found" }
-#define BAD_REQUEST         (http_response_t) { .code = 400, .mime_type = MIME_TEXT_PLAIN, .reason = "Bad Request", .content = "Bad Request" }
-#define HTTP_MOVED(loc)     (http_response_t) { .code = 301, .mime_type = MIME_TEXT_PLAIN, .reason = "Moved Permanently", .content = "Moved Permanently", .location = loc }
+#define NOT_IMPLEMENTED     (http_response_t) { .code = 501, .mime_type = MIME_TEXT_PLAIN, .reason = "Not Implemented", .content = "Not Implemented", .content_len = sizeof("Not Implemented") - 1 }
+#define NOT_FOUND           (http_response_t) { .code = 404, .mime_type = MIME_TEXT_PLAIN, .reason = "Not Found", .content = "Not Found", .content_len = sizeof("Not Found") - 1 }
+#define BAD_REQUEST         (http_response_t) { .code = 400, .mime_type = MIME_TEXT_PLAIN, .reason = "Bad Request", .content = "Bad Request", .content_len = sizeof("Bad Request") - 1 }
+#define HTTP_MOVED(loc)     (http_response_t) { .code = 301, .mime_type = MIME_TEXT_PLAIN, .reason = "Moved Permanently", .content = "Moved Permanently", .content_len = sizeof("Moved Permanently") - 1, .location = loc }
 
 
 int get_mime_type(const char *path) {
@@ -72,11 +72,13 @@ http_response_t get_path(const char *url) {
 
     char *approot = config_get(config, "app", "root");
     if (!approot) {
+        static const char msg[] = "Internal Server Error (app.root key could not be found in config)";
         return (http_response_t) {
             .code = 500,
             .mime_type = MIME_TEXT_PLAIN,
             .reason = "Internal Server Error",
-            .content = "Internal Server Error (app.root key could not be found in config)"
+            .content = (char *)msg,
+            .content_len = sizeof(msg) - 1
         };
     }
 
@@ -119,6 +121,7 @@ http_response_t get_path(const char *url) {
     resp.reason = "OK";
     resp.mime_type = get_mime_type(full_path);
     resp.content = palloc(sb.st_size+1);
+    resp.content_len = sb.st_size;
     memcpy(resp.content, content, sb.st_size);
     resp.content[sb.st_size] = '\0';
 
