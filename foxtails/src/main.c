@@ -41,6 +41,10 @@ int main(void) {
     int max_connections = config_get_int(config, "server", "max-connections");
     if (!max_connections) max_connections = 512;
 
+    int keep_alive_timeout = config_get_int(config, "server", "keep-alive-timeout");
+    if (!keep_alive_timeout) keep_alive_timeout = 75;
+    clog(CLOG_TRACE, "Keep-alive timeout: %ds", keep_alive_timeout);
+
     server_t server = server_init(max_connections, num_workers, port);
 
     http_socket_listen(server.socket, server.workers);
@@ -50,11 +54,24 @@ int main(void) {
     const int maxevents = 32;
 
     while (running) {
-        int num_events = epoll_wait(server.epoll_instance, events, maxevents, -1);
+        int num_events = epoll_wait(server.epoll_instance, events, maxevents, 1);
         if (num_events < 0) {
             if (errno == EINTR) continue;
             clog(CLOG_ERROR, "epoll_wait failed: %s", strerror(errno));
             continue;
+        }
+
+        if (num_events == 0) {
+            for (int i = 0; i < max_connections; i++) {
+                if (!server.clients[i].is_alive) continue;
+
+                time_t idle = time(NULL) - server.clients[i].last_recv;
+                if (idle >= keep_alive_timeout) {
+                    clog(CLOG_DEBUG, "Client fd=%d (slot %d) idle for %lds (limit %ds); closing",
+                         server.clients[i].socket.fd, i, (long)idle, keep_alive_timeout);
+                    server_remove_client(&server, server.clients[i]);
+                }
+            }
         }
 
         for (int i = 0; i < num_events; i++) {

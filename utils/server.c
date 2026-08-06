@@ -107,6 +107,7 @@ void server_append_client(server_t *server, socket_t client) {
         pthread_mutex_unlock(&server->free_list.lock);
         return;
     }
+    server->clients[free_idx].is_alive = true;
     clog(CLOG_DEBUG, "Accepted client fd=%d into slot %d", client.fd, free_idx);
     pthread_mutex_unlock(&server->free_list.lock);
 }
@@ -119,6 +120,7 @@ void server_remove_client(server_t *server, client_t client) {
     int_stack_push(&server->free_list, client.idx);
     close(client.socket.fd);
     clog(CLOG_DEBUG, "Removed client fd=%d from slot %d", client.socket.fd, client.idx);
+    server->clients[client.idx].is_alive = false;
     pthread_mutex_unlock(&server->free_list.lock);
 }
 

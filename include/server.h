@@ -13,6 +13,7 @@ typedef struct client {
     time_t last_recv;
     int idx;
     struct server *serv;
+    bool is_alive;
 } client_t;
 
 typedef struct {
