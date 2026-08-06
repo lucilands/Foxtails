@@ -1,6 +1,7 @@
 #include <http.h>
 
 #include <clog.h>
+#include <cpool.h>
 
 #include <errno.h>
 #include <stdlib.h>
@@ -94,12 +95,11 @@ const char *mime_type_str(int mime_type) {
 }
 
 http_request_t http_request_parse(char *buf, size_t len) {
-    char *buffer = strdup(buf);
+    char *buffer = pstrdup(buf);
 
     char *line_end = memchr(buffer, '\n', len);
     if (!line_end) {
         clog(CLOG_WARNING, "Partial request. Ignoring");
-        free(buffer);
         return (http_request_t){0};
     }
     size_t line_len = line_end - buffer;
@@ -113,7 +113,6 @@ http_request_t http_request_parse(char *buf, size_t len) {
     char *method_end = memchr(buffer, ' ', line_len);
     if (!method_end) {
         clog(CLOG_ERROR, "Malformed request line. Ignoring");
-        free(buffer);
         return (http_request_t){0};
     }
     size_t method_len = method_end - method_start;
@@ -121,7 +120,6 @@ http_request_t http_request_parse(char *buf, size_t len) {
     request.method = http_method_from_str(method_start, method_len);
     if (request.method < 0) {
         clog(CLOG_ERROR, "Invalid HTTP method %.*s", (int)method_len, method_start);
-        free(buffer);
         return (http_request_t){0};
     }
 
@@ -130,7 +128,6 @@ http_request_t http_request_parse(char *buf, size_t len) {
     char *path_end = memchr(path_start, ' ', path_remaining);
     if (!path_end) {
         clog(CLOG_ERROR, "Malformed request. Ignoring");
-        free(buffer);
         return (http_request_t){0};
     }
     size_t path_len = path_end - path_start;
@@ -140,11 +137,10 @@ http_request_t http_request_parse(char *buf, size_t len) {
 
     if (version_len != 8 || memcmp(version_start, "HTTP/1.1", 8) != 0) {
         clog(CLOG_ERROR, "Unsupported HTTP version %.*s", (int)version_len, version_start);
-        free(buffer);
         return (http_request_t){0};
     }
     request.version = HTTP_VERSION_1_1;
-    request.path = strndup(path_start, path_len);
+    request.path = pstrndup(path_start, path_len);
 
     char *line;
     for (line = strtok(line_end + 1, "\n"); line; line = strtok(NULL, "\n")) {
@@ -166,7 +162,6 @@ http_request_t http_request_parse(char *buf, size_t len) {
         }
     }
 
-    free(buffer);
 
     return request;
 }
@@ -174,9 +169,6 @@ http_request_t http_request_parse(char *buf, size_t len) {
 
 void http_send_response(int fd, http_response_t response) {
     char header[1024];
-    // Always stamped here, rather than relying on each call site to set
-    // response.date itself — that's how it ended up defaulting to the epoch
-    // on responses built outside fetch_response's GET path (e.g. BAD_REQUEST).
     time_t now = time(NULL);
     struct tm *tm_info = gmtime(&now);
     char date[32];
@@ -189,11 +181,8 @@ void http_send_response(int fd, http_response_t response) {
                                         response.code, response.reason, date, mime_type_str(response.mime_type), response.content_len);
 
 
-    // response.content may be arbitrary binary data (images, etc.) and isn't
-    // guaranteed to be NUL-terminated in a meaningful way, so we size and copy
-    // it by response.content_len rather than strlen().
     size_t response_len = header_len + response.content_len;
-    char *resp = malloc(response_len + 1);
+    char *resp = palloc(response_len + 1);
     if (!resp) {
         clog(CLOG_ERROR, "Failed to allocate memory for response (fd=%d)", fd);
         return;
@@ -208,6 +197,4 @@ void http_send_response(int fd, http_response_t response) {
     } else {
         clog(CLOG_DEBUG, "Sent %i response (%zu bytes) on fd=%d", response.code, response_len, fd);
     }
-
-    free(resp);
 }

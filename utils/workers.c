@@ -15,7 +15,6 @@ void *worker_loop(void *arg) {
     worker_thread_args_t *targs = (worker_thread_args_t*)arg;
     struct worker_queue *queue = targs->queue;
     unsigned int worker_id = targs->id;
-    free(targs);
 
     char fmt_buf[128];
     snprintf(fmt_buf, sizeof(fmt_buf), "[Worker %d] %s", worker_id, CLOG_PRETTY_FMT);
@@ -59,12 +58,12 @@ void *worker_loop(void *arg) {
 }
 
 void init_queue(struct worker_queue **queue) {
-    (*queue)->data = malloc(8 * sizeof(worker_action_t));
+    cpool_align(__alignof__(worker_action_t));
+    (*queue)->data = pcalloc(8, sizeof(worker_action_t));
     if (!(*queue)->data) {
         clog(CLOG_FATAL, "Failed to allocate worker queue");
         exit(1);
     }
-    memset((*queue)->data, 0, 8 * sizeof(worker_action_t));
     (*queue)->capacity = 8;
     (*queue)->head = 0;
     (*queue)->count = 0;
@@ -76,7 +75,8 @@ void init_queue(struct worker_queue **queue) {
 
 worker_pool_t worker_pool_init(unsigned int num_workers) {
     worker_pool_t ret = {0};
-    ret.workers = malloc(sizeof(pthread_t) * num_workers);
+    cpool_align(__alignof__(pthread_t));
+    ret.workers = pcalloc(num_workers, sizeof(pthread_t));
     if (!ret.workers) {
         clog(CLOG_FATAL, "Failed to allocate thread pool");
         exit(1);
@@ -84,7 +84,8 @@ worker_pool_t worker_pool_init(unsigned int num_workers) {
 
     ret.num_workers = num_workers;
 
-    ret.queue = malloc(sizeof(*ret.queue));
+    cpool_align(__alignof__(struct worker_queue));
+    ret.queue = pcalloc(1, sizeof(*ret.queue));
     if (!ret.queue) {
         clog(CLOG_FATAL, "Failed to allocate worker queue");
         exit(1);
@@ -94,7 +95,8 @@ worker_pool_t worker_pool_init(unsigned int num_workers) {
 
     pthread_mutex_lock(&ret.queue->lock);
     for (unsigned int i = 0; i < ret.num_workers; i++) {
-        worker_thread_args_t *targs = malloc(sizeof(*targs));
+        cpool_align(__alignof__(worker_thread_args_t));
+        worker_thread_args_t *targs = pcalloc(1, sizeof(*targs));
         if (!targs) {
             clog(CLOG_FATAL, "Failed to allocate worker thread args");
             exit(1);
@@ -128,9 +130,6 @@ void worker_pool_delete(worker_pool_t pool) {
 
     pthread_mutex_destroy(&pool.queue->lock);
     pthread_cond_destroy(&pool.queue->not_empty);
-    free(pool.workers);
-    if (pool.queue->data) free(pool.queue->data);
-    free(pool.queue);
 
     clog(CLOG_INFO, "Worker pool shut down");
 }
@@ -142,7 +141,8 @@ void dispatch_command(worker_pool_t *pool, int action, void *payload, size_t pay
     if (pool->queue->count+1 >= pool->queue->capacity) {
         unsigned int old_capacity = pool->queue->capacity;
         unsigned int new_capacity = old_capacity * 2;
-        worker_action_t *new_data = malloc(new_capacity * sizeof(worker_action_t));
+        cpool_align(__alignof__(worker_action_t));
+        worker_action_t *new_data = pcalloc(new_capacity, sizeof(worker_action_t));
         if (!new_data) {
             clog(CLOG_ERROR, "Failed to resize command queue from %u to %u slots", old_capacity, new_capacity);
             pthread_mutex_unlock(&pool->queue->lock);
@@ -153,7 +153,6 @@ void dispatch_command(worker_pool_t *pool, int action, void *payload, size_t pay
             new_data[i] = pool->queue->data[(pool->queue->head + i) % pool->queue->capacity];
         }
 
-        free(pool->queue->data);
         pool->queue->data = new_data;
         pool->queue->head = 0;
         pool->queue->capacity = new_capacity;

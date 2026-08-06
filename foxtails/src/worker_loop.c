@@ -82,17 +82,13 @@ http_response_t get_path(const char *url) {
         };
     }
 
-    char *full_path = palloc(strlen(approot) + strlen(url) + 1);
-    memset(full_path, 0, strlen(approot) + strlen(url) + 1);
-    strcat(full_path, approot);
+    char *full_path = pcalloc(strlen(approot) + strlen(url) + 1, 1);
+    strcpy(full_path, approot);
     strcat(full_path, url);
 
     if (verify_url(approot, full_path)) {
-        free(approot);
         return NOT_FOUND;
     }
-
-    free(approot);
 
 
     int fd = open(full_path, O_RDONLY);
@@ -160,8 +156,7 @@ static http_response_t serve_path(http_request_t *req) {
 }
 
 static http_response_t handle_alias(http_request_t *req, route_t *route) {
-    free(req->path);
-    req->path = strdup(route->dest);
+    req->path = pstrdup(route->dest);
     return serve_path(req);
 }
 
@@ -218,8 +213,6 @@ void worker_callback(void *payload, int type) {
             http_response_t response = fetch_response(req);
 
             http_send_response(client->socket.fd, response);
-
-            free(req.path);
 
             if (req.connection == HTTP_CONNECTION_KEEP_ALIVE) {
                 struct epoll_event event = {

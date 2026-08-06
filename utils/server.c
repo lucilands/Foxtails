@@ -1,6 +1,7 @@
 #include <pthread.h>
 #include <server.h>
 #include <clog.h>
+#include <cpool.h>
 
 #include <unistd.h>
 #include <sys/epoll.h>
@@ -36,12 +37,12 @@ server_t server_init(int max_connections, int num_workers, int port) {
     server.socket = http_socket_create(port);
     clog(CLOG_TRACE, "Created socket on port %i", port);
 
-    server.clients = malloc(max_connections * sizeof(client_t));
+    cpool_align(__alignof__(client_t));
+    server.clients = pcalloc(max_connections, sizeof(client_t));
     if (!server.clients) {
         clog(CLOG_FATAL, "Failed to allocate memory for %i clients", max_connections);
         exit(1);
     }
-    memset(server.clients, 0, max_connections * sizeof(client_t));
 
     server.epoll_instance = epoll_create1(0);
     if (server.epoll_instance < 0) {
@@ -60,7 +61,8 @@ server_t server_init(int max_connections, int num_workers, int port) {
     }
     clog(CLOG_TRACE, "Registered listening socket with epoll");
 
-    server.free_list.data = malloc(max_connections * sizeof(int));
+    cpool_align(__alignof__(int));
+    server.free_list.data = pcalloc(max_connections, sizeof(int));
     if (!server.free_list.data) {
         clog(CLOG_FATAL, "Failed to allocate memory for %i clients", max_connections);
         exit(1);
@@ -127,8 +129,6 @@ void server_remove_client(server_t *server, client_t client) {
 void server_delete(server_t server) {
     clog(CLOG_INFO, "Shutting down server");
     pthread_mutex_destroy(&server.free_list.lock);
-    free(server.clients);
-    free(server.free_list.data);
     close(server.socket.fd);
     close(server.epoll_instance);
     worker_pool_delete(server.workers);

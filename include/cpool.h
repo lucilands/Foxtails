@@ -42,6 +42,7 @@ void cpool_restore(void);
 
 void *pmemdup(void *p, size_t s);
 char *pstrdup(char *p);
+char *pstrndup(char *p, size_t n);
 
 #endif //__CPOOL_H
 #ifdef CPOOL_IMPLEMENTATION
@@ -316,6 +317,14 @@ void *pmemdup(void *p, size_t s) {
 
 char *pstrdup(char *p) {
 	return (char*)pmemdup(p, strlen(p)+1);
+}
+
+char *pstrndup(char *p, size_t n) {
+	size_t len = strnlen(p, n);
+	char *ret = (char*)pcalloc(len + 1, 1);
+	if (!ret) return NULL;
+	CPOOL_MEMCPY(ret, p, len);
+	return ret;
 }
 
 void cpool_uninit(cpool_t pool) {

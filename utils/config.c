@@ -1,5 +1,6 @@
 #include <config.h>
 #include <clog.h>
+#include <cpool.h>
 
 #include <ctype.h>
 #include <stdbool.h>
@@ -34,7 +35,7 @@ config_t config_parse(const char *restrict path) {
 
     config_t ret = {0};
     ret.config_file.size = sb.st_size;
-    ret.config_file.path = strdup(path);
+    ret.config_file.path = pstrdup((char*)path);
 
     ret.config_file.map = mmap(NULL, sb.st_size, PROT_READ, MAP_SHARED, fd, 0);
     if (ret.config_file.map == MAP_FAILED) {
@@ -74,20 +75,23 @@ char* config_get(config_t conf, char *section, char *key) {
             continue;
         }
 
-        line = strndup(line_start, line_len);
+        char *cur_line_start = line_start;
         line_start = line_end+1;
+
+        cpool_save();
+        line = pstrndup(cur_line_start, line_len);
 
         if (found_section) {
             if (line[0] == '[') {
+                cpool_restore();
                 clog(CLOG_WARNING, "Could not find config key %s/%s.%s", conf.config_file.path, section, key);
-                free(line);
                 return NULL;
             }
 
             char *key_end = strpbrk(line, " =");
             if (!key_end) {
+                cpool_restore();
                 clog(CLOG_WARNING, "Invalid syntax on line %i, not a valid key-value pair", line_no);
-                free(line);
                 return NULL;
             }
 
@@ -95,17 +99,17 @@ char* config_get(config_t conf, char *section, char *key) {
                 while (isspace(*key_end) || *key_end == ' ') key_end++;
                 char *value_end = strchr(key_end + 1, '\0');
                 if (!value_end) {
+                    cpool_restore();
                     clog(CLOG_WARNING, "Invalid syntax on line %i, not a valid key-value pair", line_no);
-                    free(line);
                     return NULL;
                 }
 
-                char *value = strndup(key_end+1, value_end - (key_end+1));
-                free(line);
-                //clog(CLOG_DEBUG, "Found config value %s/%s.%s = %s", conf.config_file.path, section, key, value);
-                return value;
+                size_t value_off = (key_end+1) - line;
+                size_t value_len = value_end - (key_end+1);
+                cpool_restore();
+                return pstrndup(cur_line_start + value_off, value_len);
             }
-            free(line);
+            cpool_restore();
             continue;
         }
 
@@ -114,7 +118,7 @@ char* config_get(config_t conf, char *section, char *key) {
             if (!section_name_end) {
                 clog(CLOG_WARNING, "Invalid syntax in line %i, a section name was opened but never closed.\n%s:%i\t%s\n%*s^ Consider adding a ']'",
                         line_no, conf.config_file.path, line_no, line, strlen(line) + strlen(conf.config_file.path) + 1 + numdigits(line_no), "");
-                free(line);
+                cpool_restore();
                 return NULL;
             }
 
@@ -124,7 +128,7 @@ char* config_get(config_t conf, char *section, char *key) {
             }
         }
 
-        free(line);
+        cpool_restore();
     }
 
     clog(CLOG_WARNING, "Could not find config key %s/%s.%s", conf.config_file.path, section, key);
@@ -132,7 +136,6 @@ char* config_get(config_t conf, char *section, char *key) {
 }
 
 void config_delete(config_t conf) {
-    free((void*)conf.config_file.path);
     munmap((void*)conf.config_file.map, conf.config_file.size);
     close(conf.config_file.fd);
 }
@@ -142,6 +145,5 @@ int config_get_int(config_t conf, char *section, char *key) {
     if (!val) return 0;
     int value = strtol(val, NULL, 10);
 
-    free(val);
     return value;
 }

@@ -1,6 +1,7 @@
 #include <routing.h>
 #include <http.h>
 #include <clog.h>
+#include <cpool.h>
 
 #include <stdbool.h>
 #include <stdlib.h>
@@ -12,10 +13,6 @@
 #include <sys/mman.h>
 
 
-// Appends `route` to `routes`, growing the backing array by one. This table
-// is only ever built once at startup from a small config file, so a plain
-// realloc-per-append is fine — no need for the amortized-doubling dance the
-// hot-path worker queue uses.
 static bool append_route(route_table_t *routes, route_t route) {
     route_t *new_routes = realloc(routes->routes, (routes->len + 1) * sizeof(route_t));
     if (!new_routes) {
@@ -34,23 +31,19 @@ static int route_str_to_type(const char *str) {
     return -1;
 }
 
-// Parses a comma-separated list of method names (e.g. "GET,POST"), or "*"/"ALL"
-// for every method, into a REQUEST_* bitmask. Returns -1 if any method is unrecognized.
 static int route_str_to_methods(const char *str) {
     if (strcmp(str, "*") == 0 || strcasecmp(str, "ALL") == 0) return REQUEST_ALL;
 
-    char *copy = strdup(str);
+    char *copy = pstrdup((char*)str);
     int methods = 0;
     for (char *tok = strtok(copy, ","); tok; tok = strtok(NULL, ",")) {
         while (*tok == ' ' || *tok == '\t') tok++;
         int m = http_method_from_str(tok, strlen(tok));
         if (m < 0) {
-            free(copy);
             return -1;
         }
         methods |= m;
     }
-    free(copy);
     return methods;
 }
 
@@ -96,8 +89,11 @@ route_table_t routes_parse(const char *restrict path) {
             continue;
         }
 
-        line = strndup(line_start, line_len);
+        char *cur_line_start = line_start;
         line_start = line_end+1;
+
+        cpool_save();
+        line = pstrndup(cur_line_start, line_len);
 
         char *methods_str = strtok(line, " \t\v");
         if (!methods_str) goto malformed_line;
@@ -123,20 +119,27 @@ route_table_t routes_parse(const char *restrict path) {
             goto malformed_line;
         }
 
-        if (!append_route(&ret, (route_t) {
-            .type = type,
-            .methods = methods,
-            .dest = strdup(target),
-            .src = strdup(route)
-        })) {
-            clog(CLOG_ERROR, "Failed to store route at %s:%zu", path, line_no);
+        {
+            size_t route_off = route - line, route_len = strlen(route);
+            size_t target_off = target - line, target_len = strlen(target);
+            cpool_restore();
+
+            if (!append_route(&ret, (route_t) {
+                .type = type,
+                .methods = methods,
+                .dest = pstrndup(cur_line_start + target_off, target_len),
+                .src = pstrndup(cur_line_start + route_off, route_len)
+            })) {
+                clog(CLOG_ERROR, "Failed to store route at %s:%zu", path, line_no);
+            }
         }
 
         goto end;
 malformed_line:
         clog(CLOG_ERROR, "Malformed route %s:%zu", path, line_no);
+        cpool_restore();
 end:
-        free(line);
+        ;
     }
 
     munmap(map, sb.st_size);
@@ -146,9 +149,5 @@ end:
 }
 
 void routes_delete(route_table_t routes) {
-    for (unsigned int i = 0; i < routes.len; i++) {
-        free(routes.routes[i].src);
-        free(routes.routes[i].dest);
-    }
     free(routes.routes);
 }
