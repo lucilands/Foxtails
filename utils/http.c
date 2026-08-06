@@ -174,10 +174,18 @@ http_request_t http_request_parse(char *buf, size_t len) {
 
 void http_send_response(int fd, http_response_t response) {
     char header[1024];
-    struct tm *tm_info = gmtime(&response.date);
+    // Always stamped here, rather than relying on each call site to set
+    // response.date itself — that's how it ended up defaulting to the epoch
+    // on responses built outside fetch_response's GET path (e.g. BAD_REQUEST).
+    time_t now = time(NULL);
+    struct tm *tm_info = gmtime(&now);
     char date[32];
     strftime(date, sizeof(date), "%a, %d %b %Y %H:%M:%S GMT", tm_info);
-    size_t header_len = snprintf(header, 1024, "HTTP/1.1 %i %s\r\nDate: %s\r\nServer: Foxtails\r\nContent-Type: %s\r\nContent-Length: %lu\r\n\r\n",
+    
+    size_t header_len = 0;
+    if (response.location) header_len = snprintf(header, 1024, "HTTP/1.1 %i %s\r\nDate: %s\r\nServer: Foxtails\r\nContent-Type: %s\r\nContent-Length: %lu\r\nLocation: %s\r\n\r\n",
+                                        response.code, response.reason, date, mime_type_str(response.mime_type), strlen(response.content), response.location);
+    else header_len = snprintf(header, 1024, "HTTP/1.1 %i %s\r\nDate: %s\r\nServer: Foxtails\r\nContent-Type: %s\r\nContent-Length: %lu\r\n\r\n",
                                         response.code, response.reason, date, mime_type_str(response.mime_type), strlen(response.content));
 
 

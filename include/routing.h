@@ -2,7 +2,7 @@
 #define __ROUTING_H
 
 enum {
-    ROUTE_TYPE_REDIRECT = 0,
+    ROUTE_TYPE_ALIAS = 0,
     ROUTE_TYPE_REROUTE,
 };
 
@@ -11,6 +11,7 @@ typedef struct {
     char *dest;
 
     int type;
+    int methods; // Bitmask of REQUEST_* from http.h (see REQUEST_ALL for "any method").
 } route_t;
 
 typedef struct {

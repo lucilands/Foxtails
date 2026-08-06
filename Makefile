@@ -5,7 +5,8 @@ UTILS_OBJ:=utils/sockets.o\
 		   utils/workers.o\
 		   utils/http.o \
 		   utils/config.o \
-		   utils/server.o
+		   utils/server.o \
+		   utils/routing.o
 
 BINDIR=bin
 FOXTAIL_SRC=foxtails/src

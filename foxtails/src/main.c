@@ -1,3 +1,4 @@
+#include "routing.h"
 #include "server.h"
 #include <signal.h>
 #include <sys/epoll.h>
@@ -19,6 +20,7 @@
 
 
 config_t config;
+route_table_t routes;
 
 static bool running = true;
 
@@ -44,6 +46,8 @@ int main(void) {
     int keep_alive_timeout = config_get_int(config, "server", "keep-alive-timeout");
     if (!keep_alive_timeout) keep_alive_timeout = 75;
     clog(CLOG_TRACE, "Keep-alive timeout: %ds", keep_alive_timeout);
+
+    routes = routes_parse("routes.conf");
 
     server_t server = server_init(max_connections, num_workers, port);
 
@@ -89,6 +93,7 @@ int main(void) {
     }
 
     server_delete(server);
+    routes_delete(routes);
     config_delete(config);
     cpool_uninit(mempool);
     return 0;

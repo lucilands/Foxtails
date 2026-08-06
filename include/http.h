@@ -4,16 +4,23 @@
 #include <stddef.h>
 #include <time.h>
 
+// Bit flags (not sequential indices) so a caller can OR several together into
+// a mask of methods, e.g. for route_t.methods.
 enum {
-    REQUEST_GET = 0,
-    REQUEST_HEAD,
-    REQUEST_POST,
-    REQUEST_PUT,
-    REQUEST_DELETE,
-    REQUEST_CONNECT,
-    REQUEST_OPTIONS,
-    REQUEST_TRACE,
-    REQUEST_PATCH,
+    REQUEST_GET     = 1 << 0,
+    REQUEST_HEAD    = 1 << 1,
+    REQUEST_POST    = 1 << 2,
+    REQUEST_PUT     = 1 << 3,
+    REQUEST_DELETE  = 1 << 4,
+    REQUEST_CONNECT = 1 << 5,
+    REQUEST_OPTIONS = 1 << 6,
+    REQUEST_TRACE   = 1 << 7,
+    REQUEST_PATCH   = 1 << 8,
+};
+
+enum {
+    REQUEST_ALL = REQUEST_GET | REQUEST_HEAD | REQUEST_POST | REQUEST_PUT | REQUEST_DELETE
+                | REQUEST_CONNECT | REQUEST_OPTIONS | REQUEST_TRACE | REQUEST_PATCH,
 };
 
 enum {
@@ -55,6 +62,7 @@ typedef struct {
     int mime_type;
     char *reason;
     char *content;
+    char *location;
     time_t date;
 } http_response_t;
 
