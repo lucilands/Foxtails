@@ -20,3 +20,8 @@ $(BINDIR):
 	mkdir -p $@
 
 -include $(UTILS_OBJ:.o=.d)
+
+clean:
+	rm -r $(BINDIR)
+	rm $(UTILS_OBJ)
+	rm $(OBJ)
