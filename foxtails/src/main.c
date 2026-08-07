@@ -65,17 +65,18 @@ int main(void) {
             continue;
         }
 
-        if (num_events == 0) {
-            for (int i = 0; i < max_connections; i++) {
-                if (!server.clients[i].is_alive) continue;
+        time_t oldest_timestamp = time(NULL);
+        for (int i = 0; i < max_connections; i++) {
+            if (!server.clients[i].is_alive) continue;
 
-                time_t idle = time(NULL) - server.clients[i].last_recv;
-                if (idle >= keep_alive_timeout) {
-                    clog(CLOG_DEBUG, "Client fd=%d (slot %d) idle for %lds (limit %ds); closing",
-                         server.clients[i].socket.fd, i, (long)idle, keep_alive_timeout);
-                    server_remove_client(&server, server.clients[i]);
-                }
+            time_t idle = time(NULL) - server.clients[i].last_recv;
+            if (idle >= keep_alive_timeout) {
+                clog(CLOG_DEBUG, "Client fd=%d (slot %d) idle for %lds (limit %ds); closing",
+                        server.clients[i].socket.fd, i, (long)idle, keep_alive_timeout);
+                server_remove_client(&server, server.clients[i]);
+                continue;
             }
+            oldest_timestamp = server.clients[i].last_recv;
         }
 
         for (int i = 0; i < num_events; i++) {
@@ -84,9 +85,12 @@ int main(void) {
                 clog(CLOG_DEBUG, "Data ready on fd=%d (slot %d). Dispatching to worker", client->socket.fd, client->idx);
                 dispatch_client(&server.workers, client);
             } else {
+                if (server.free_list.head <= 0) {
+                    continue;
+                }
                 socket_t client;
                 while (http_socket_accept(server.socket, &client)) {
-                    server_append_client(&server, client);
+                    server_append_client(&server, client, oldest_timestamp);
                 }
             }
         }

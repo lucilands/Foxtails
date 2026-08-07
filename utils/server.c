@@ -1,3 +1,4 @@
+#include "http.h"
 #include <pthread.h>
 #include <server.h>
 #include <clog.h>
@@ -5,6 +6,7 @@
 
 #include <unistd.h>
 #include <sys/epoll.h>
+#include <arpa/inet.h>
 
 #include <errno.h>
 #include <stdlib.h>
@@ -81,12 +83,24 @@ server_t server_init(int max_connections, int num_workers, int port) {
     return server;
 }
 
-void server_append_client(server_t *server, socket_t client) {
+void server_append_client(server_t *server, socket_t client, time_t oldest_client) {
     pthread_mutex_lock(&server->free_list.lock);
     int free_idx = int_stack_pop(&server->free_list);
     if (free_idx < 0) {
+        time_t retry_in = time(NULL) - oldest_client;
+        http_send_response(client.fd, (http_response_t) {
+            .code = 503,
+            .reason = "Service Unavailable",
+            .content = "Service Unavailable",
+            .content_len = sizeof("Service Unavailable"),
+            .date = time(NULL),
+            .mime_type = MIME_TEXT_PLAIN,
+            .retry_in = retry_in,
+        });
+
         close(client.fd);
-        clog(CLOG_WARNING, "Client pool exhausted (capacity=%u); rejecting fd=%d", server->free_list.capacity, client.fd);
+        clog(CLOG_WARNING, "Client pool exhausted (capacity=%u); rejecting fd=%d with 503 (Retry-After: %llds)",
+             server->free_list.capacity, client.fd, (long long)retry_in);
         pthread_mutex_unlock(&server->free_list.lock);
         return;
     }
@@ -97,6 +111,11 @@ void server_append_client(server_t *server, socket_t client) {
         .serv = server,
         .idx = free_idx
     };
+    if (!inet_ntop(AF_INET, &client.address.sin_addr, server->clients[free_idx].ip_addr, sizeof(server->clients[free_idx].ip_addr))) {
+        clog(CLOG_WARNING, "Failed to format client address for fd=%d: %s", client.fd, strerror(errno));
+        server->clients[free_idx].ip_addr[0] = '\0';
+    }
+
     struct epoll_event event = {
         .events = EPOLLIN | EPOLLONESHOT,
         .data = {.ptr = &server->clients[free_idx]}
@@ -110,7 +129,7 @@ void server_append_client(server_t *server, socket_t client) {
         return;
     }
     server->clients[free_idx].is_alive = true;
-    clog(CLOG_DEBUG, "Accepted client fd=%d into slot %d", client.fd, free_idx);
+    clog(CLOG_DEBUG, "Accepted client fd=%d (%s) into slot %d", client.fd, server->clients[free_idx].ip_addr, free_idx);
     pthread_mutex_unlock(&server->free_list.lock);
 }
 

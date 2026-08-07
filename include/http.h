@@ -4,8 +4,6 @@
 #include <stddef.h>
 #include <time.h>
 
-// Bit flags (not sequential indices) so a caller can OR several together into
-// a mask of methods, e.g. for route_t.methods.
 enum {
     REQUEST_GET     = 1 << 0,
     REQUEST_HEAD    = 1 << 1,
@@ -43,8 +41,6 @@ enum {
     HTTP_VERSION_1_1 = 0,
 };
 
-// Defaults to HTTP_CONNECTION_KEEP_ALIVE (value 0) since that's HTTP/1.1's
-// default when no `Connection` header is present.
 enum {
     HTTP_CONNECTION_KEEP_ALIVE = 0,
     HTTP_CONNECTION_CLOSE,
@@ -63,8 +59,9 @@ typedef struct {
     char *reason;
     char *content;
     size_t content_len;
-    char *location;
+    char *location; // Optional
     time_t date;
+    time_t retry_in; // Optional
 } http_response_t;
 
 http_request_t http_request_parse(char *buffer, size_t len);

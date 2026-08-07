@@ -156,12 +156,14 @@ static http_response_t serve_path(http_request_t *req) {
 }
 
 static http_response_t handle_alias(http_request_t *req, route_t *route) {
+    clog(CLOG_TRACE, "Alias '%s' -> '%s'", route->src, route->dest);
     req->path = pstrdup(route->dest);
     return serve_path(req);
 }
 
 static http_response_t handle_reroute(http_request_t *req, route_t *route) {
     (void)req;
+    clog(CLOG_TRACE, "Reroute '%s' -> '%s'", route->src, route->dest);
     return HTTP_MOVED(route->dest);
 }
 

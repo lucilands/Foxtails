@@ -174,11 +174,21 @@ void http_send_response(int fd, http_response_t response) {
     char date[32];
     strftime(date, sizeof(date), "%a, %d %b %Y %H:%M:%S GMT", tm_info);
     
-    size_t header_len = 0;
-    if (response.location) header_len = snprintf(header, 1024, "HTTP/1.1 %i %s\r\nDate: %s\r\nServer: Foxtails\r\nContent-Type: %s\r\nContent-Length: %lu\r\nLocation: %s\r\n\r\n",
-                                        response.code, response.reason, date, mime_type_str(response.mime_type), response.content_len, response.location);
-    else header_len = snprintf(header, 1024, "HTTP/1.1 %i %s\r\nDate: %s\r\nServer: Foxtails\r\nContent-Type: %s\r\nContent-Length: %lu\r\n\r\n",
-                                        response.code, response.reason, date, mime_type_str(response.mime_type), response.content_len);
+    size_t header_len = snprintf(header, sizeof(header),
+        "HTTP/1.1 %i %s\r\nDate: %s\r\nServer: Foxtails\r\nContent-Type: %s\r\nContent-Length: %zu\r\n",
+        response.code, response.reason, date, mime_type_str(response.mime_type), response.content_len);
+
+    if (response.location) {
+        header_len += snprintf(header + header_len, sizeof(header) - header_len,
+            "Location: %s\r\n", response.location);
+    }
+
+    if (response.retry_in > 0) {
+        header_len += snprintf(header + header_len, sizeof(header) - header_len,
+            "Retry-After: %lld\r\n", (long long)response.retry_in);
+    }
+
+    header_len += snprintf(header + header_len, sizeof(header) - header_len, "\r\n");
 
 
     size_t response_len = header_len + response.content_len;

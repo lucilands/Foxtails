@@ -14,6 +14,7 @@ typedef struct client {
     int idx;
     struct server *serv;
     bool is_alive;
+    char ip_addr[INET_ADDRSTRLEN]; // Set once in server_append_client; no per-connection allocation needed.
 } client_t;
 
 typedef struct {
@@ -41,7 +42,7 @@ typedef struct server {
 server_t server_init(int max_connections, int num_workers, int port);
 void server_delete(server_t server);
 
-void server_append_client(server_t *server, socket_t client);
+void server_append_client(server_t *server, socket_t client, time_t oldest_client);
 void server_remove_client(server_t *server, client_t client);
 
 #endif //__SERVER_H

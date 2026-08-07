@@ -145,6 +145,7 @@ end:
     munmap(map, sb.st_size);
     close(fd);
 
+    clog(CLOG_INFO, "Loaded %u route(s) from %s", ret.len, path);
     return ret;
 }
 
