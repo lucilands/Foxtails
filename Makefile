@@ -24,4 +24,5 @@ $(BINDIR):
 clean:
 	rm -r $(BINDIR)
 	rm $(UTILS_OBJ)
+	rm $(UTILS_OBJ:%.o=%.d)
 	rm $(OBJ)
