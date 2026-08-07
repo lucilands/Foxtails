@@ -7,8 +7,7 @@
 
 #define CLOG_PRETTY_FMT "%c[%L]%r %t %f:%l   %m"
 
-// Max size, in bytes, of the payload copied into a dispatched command.
-#define WORKER_ACTION_PAYLOAD_SIZE 64
+#define WORKER_ACTION_PAYLOAD_SIZE 128
 
 enum {
     WORKER_ACTION_NOOP = 0,
