@@ -25,10 +25,14 @@
 extern config_t config;
 extern route_table_t routes;
 
-#define NOT_IMPLEMENTED     (http_response_t) { .code = 501, .mime_type = MIME_TEXT_PLAIN, .reason = "Not Implemented", .content = "Not Implemented", .content_len = sizeof("Not Implemented") - 1 }
-#define NOT_FOUND           (http_response_t) { .code = 404, .mime_type = MIME_TEXT_PLAIN, .reason = "Not Found", .content = "Not Found", .content_len = sizeof("Not Found") - 1 }
-#define BAD_REQUEST         (http_response_t) { .code = 400, .mime_type = MIME_TEXT_PLAIN, .reason = "Bad Request", .content = "Bad Request", .content_len = sizeof("Bad Request") - 1 }
-#define HTTP_MOVED(loc)     (http_response_t) { .code = 301, .mime_type = MIME_TEXT_PLAIN, .reason = "Moved Permanently", .content = "Moved Permanently", .content_len = sizeof("Moved Permanently") - 1, .location = loc }
+#define NOT_IMPLEMENTED     (http_t) { .code = 501, .reason = "Not Implemented", .body = "Not Implemented", .body_len = sizeof("Not Implemented") - 1, \
+                                        .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 } }
+#define NOT_FOUND           (http_t) { .code = 404, .reason = "Not Found", .body = "Not Found", .body_len = sizeof("Not Found") - 1, \
+                                        .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 } }
+#define BAD_REQUEST         (http_t) { .code = 400, .reason = "Bad Request", .body = "Bad Request", .body_len = sizeof("Bad Request") - 1, \
+                                        .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 } }
+#define HTTP_MOVED(loc)     (http_t) { .code = 301, .reason = "Moved Permanently", .body = "Moved Permanently", .body_len = sizeof("Moved Permanently") - 1, \
+                                        .headers = { .items = {{"Content-Type", "text/plain"}, {"Location", (loc)}}, .len = 2 } }
 
 
 int get_mime_type(const char *path) {
@@ -67,18 +71,18 @@ int verify_url(const char *approot, const char *full_path) {
     return 0;
 }
 
-http_response_t get_path(const char *url) {
-    http_response_t resp = NOT_FOUND;
+http_t get_path(const char *url) {
+    http_t resp = NOT_FOUND;
 
     char *approot = config_get(config, "app", "root");
     if (!approot) {
         static const char msg[] = "Internal Server Error (app.root key could not be found in config)";
-        return (http_response_t) {
+        return (http_t) {
             .code = 500,
-            .mime_type = MIME_TEXT_PLAIN,
             .reason = "Internal Server Error",
-            .content = (char *)msg,
-            .content_len = sizeof(msg) - 1
+            .body = (char *)msg,
+            .body_len = sizeof(msg) - 1,
+            .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 }
         };
     }
 
@@ -115,21 +119,21 @@ http_response_t get_path(const char *url) {
     
     resp.code = 200;
     resp.reason = "OK";
-    resp.mime_type = get_mime_type(full_path);
-    resp.content = palloc(sb.st_size+1);
-    resp.content_len = sb.st_size;
-    memcpy(resp.content, content, sb.st_size);
-    resp.content[sb.st_size] = '\0';
+    http_set_content_type(&resp, get_mime_type(full_path));
+    resp.body = palloc(sb.st_size+1);
+    resp.body_len = sb.st_size;
+    memcpy(resp.body, content, sb.st_size);
+    resp.body[sb.st_size] = '\0';
 
     munmap(content, sb.st_size);
     close(fd);
     return resp;
 }
 
-static http_response_t serve_path(http_request_t *req) {
+static http_t serve_path(http_t *req) {
     switch (req->method) {
         case REQUEST_GET: {
-                http_response_t resp = get_path(req->path);
+                http_t resp = get_path(req->path);
                 return resp;
             }
         case REQUEST_HEAD:
@@ -155,26 +159,26 @@ static http_response_t serve_path(http_request_t *req) {
     return NOT_IMPLEMENTED;
 }
 
-static http_response_t handle_alias(http_request_t *req, route_t *route) {
+static http_t handle_alias(http_t *req, route_t *route) {
     clog(CLOG_TRACE, "Alias '%s' -> '%s'", route->src, route->dest);
     req->path = pstrdup(route->dest);
     return serve_path(req);
 }
 
-static http_response_t handle_reroute(http_request_t *req, route_t *route) {
+static http_t handle_reroute(http_t *req, route_t *route) {
     (void)req;
     clog(CLOG_TRACE, "Reroute '%s' -> '%s'", route->src, route->dest);
     return HTTP_MOVED(route->dest);
 }
 
-typedef http_response_t (*route_handler_t)(http_request_t *req, route_t *route);
+typedef http_t (*route_handler_t)(http_t *req, route_t *route);
 
 static route_handler_t route_handlers[] = {
     [ROUTE_TYPE_ALIAS]   = handle_alias,
     [ROUTE_TYPE_REROUTE] = handle_reroute,
 };
 
-http_response_t fetch_response(http_request_t req) {
+http_t fetch_response(http_t req) {
     clog(CLOG_INFO, "%s %s", http_method_to_str(req.method), req.path);
 
     for (unsigned int i = 0; i < routes.len; i++) {
@@ -205,18 +209,18 @@ void worker_callback(void *payload, int type) {
                 break;
             }
 
-            http_request_t req = http_request_parse(buf, len);
+            http_t req = http_request_parse(buf, len);
             if (req.path == NULL) {
                 http_send_response(client->socket.fd, BAD_REQUEST);
                 clog(CLOG_DEBUG, "Bad request on fd=%d (slot %d); closing", client->socket.fd, client->idx);
                 server_remove_client(client->serv, *client);
                 break;
             }
-            http_response_t response = fetch_response(req);
+            http_t response = fetch_response(req);
 
             http_send_response(client->socket.fd, response);
 
-            if (req.connection == HTTP_CONNECTION_KEEP_ALIVE) {
+            if (http_is_keep_alive(&req)) {
                 struct epoll_event event = {
                     .events = EPOLLIN | EPOLLONESHOT,
                     .data = {.ptr = &client->serv->clients[client->idx]}

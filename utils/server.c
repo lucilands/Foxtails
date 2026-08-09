@@ -9,6 +9,7 @@
 #include <arpa/inet.h>
 
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -88,15 +89,18 @@ void server_append_client(server_t *server, socket_t client, time_t oldest_clien
     int free_idx = int_stack_pop(&server->free_list);
     if (free_idx < 0) {
         time_t retry_in = time(NULL) - oldest_client;
-        http_send_response(client.fd, (http_response_t) {
+        char retry_buf[32];
+        snprintf(retry_buf, sizeof(retry_buf), "%lld", (long long)retry_in);
+
+        http_t resp = (http_t) {
             .code = 503,
             .reason = "Service Unavailable",
-            .content = "Service Unavailable",
-            .content_len = sizeof("Service Unavailable"),
-            .date = time(NULL),
-            .mime_type = MIME_TEXT_PLAIN,
-            .retry_in = retry_in,
-        });
+            .body = "Service Unavailable",
+            .body_len = sizeof("Service Unavailable") - 1,
+            .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 },
+        };
+        http_set_header(&resp, "Retry-After", retry_buf);
+        http_send_response(client.fd, resp);
 
         close(client.fd);
         clog(CLOG_WARNING, "Client pool exhausted (capacity=%u); rejecting fd=%d with 503 (Retry-After: %llds)",

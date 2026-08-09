@@ -1,6 +1,7 @@
 #ifndef __HTTP_H
 #define __HTTP_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <time.h>
 
@@ -46,26 +47,47 @@ enum {
     HTTP_CONNECTION_CLOSE,
 };
 
+#ifndef HTTP_MAX_HEADERS
+#define HTTP_MAX_HEADERS 32
+#endif //HTTP_MAX_HEADERS
+
+typedef struct {
+    char *name;
+    char *value;
+} http_header_t;
+
+typedef struct {
+    http_header_t items[HTTP_MAX_HEADERS];
+    size_t len;
+} http_headers_t;
+
 typedef struct {
     int method;
     char *path;
-    int version;
-    int connection;
-} http_request_t;
 
-typedef struct {
     int code;
-    int mime_type;
     char *reason;
-    char *content;
-    size_t content_len;
-    char *location; // Optional
-    time_t date;
-    time_t retry_in; // Optional
-} http_response_t;
 
-http_request_t http_request_parse(char *buffer, size_t len);
-void http_send_response(int fd, http_response_t response);
+    int version;
+    http_headers_t headers;
+
+    char *body;
+    size_t body_len;
+} http_t;
+
+http_t http_request_parse(char *buffer, size_t len);
+void http_send_response(int fd, http_t response);
+
+bool http_set_header(http_t *msg, const char *name, const char *value);
+char *http_get_header(const http_t *msg, const char *name);
+bool http_has_header(const http_t *msg, const char *name);
+bool http_is_keep_alive(const http_t *msg);
+
+#define http_foreach_header(msg, h) \
+    for (http_header_t *h = (msg)->headers.items; h < (msg)->headers.items + (msg)->headers.len; h++)
+
+#define http_set_content_type(msg, mime) http_set_header((msg), "Content-Type", mime_type_str(mime))
+#define http_set_location(msg, loc)      http_set_header((msg), "Location", (loc))
 
 int http_method_from_str(const char *str, size_t len);
 const char *http_method_to_str(int method);

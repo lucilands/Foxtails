@@ -94,33 +94,71 @@ const char *mime_type_str(int mime_type) {
     }
 }
 
-http_request_t http_request_parse(char *buf, size_t len) {
-    char *buffer = pstrdup(buf);
+bool http_set_header(http_t *msg, const char *name, const char *value) {
+    http_foreach_header(msg, h) {
+        if (strcasecmp(h->name, name) == 0) {
+            h->value = pstrdup((char*)value);
+            return true;
+        }
+    }
+
+    if (msg->headers.len >= HTTP_MAX_HEADERS) {
+        clog(CLOG_ERROR, "Dropping header '%s': HTTP_MAX_HEADERS (%d) exceeded", name, HTTP_MAX_HEADERS);
+        return false;
+    }
+
+    msg->headers.items[msg->headers.len++] = (http_header_t) {
+        .name = pstrdup((char*)name),
+        .value = pstrdup((char*)value),
+    };
+    return true;
+}
+
+char *http_get_header(const http_t *msg, const char *name) {
+    for (size_t i = 0; i < msg->headers.len; i++) {
+        if (strcasecmp(msg->headers.items[i].name, name) == 0) {
+            return msg->headers.items[i].value;
+        }
+    }
+    return NULL;
+}
+
+bool http_has_header(const http_t *msg, const char *name) {
+    return http_get_header(msg, name) != NULL;
+}
+
+bool http_is_keep_alive(const http_t *msg) {
+    char *value = http_get_header(msg, "Connection");
+    return !(value && strcasecmp(value, "close") == 0);
+}
+
+http_t http_request_parse(char *buf, size_t len) {
+    char *buffer = pmemdup(buf, len);
 
     char *line_end = memchr(buffer, '\n', len);
     if (!line_end) {
         clog(CLOG_WARNING, "Partial request. Ignoring");
-        return (http_request_t){0};
+        return (http_t){0};
     }
     size_t line_len = line_end - buffer;
     if (line_len > 0 && buffer[line_len - 1] == '\r') {
         line_len--;  /* strip trailing \r */
     }
 
-    http_request_t request = {0};
+    http_t request = {0};
 
     char *method_start = buffer;
     char *method_end = memchr(buffer, ' ', line_len);
     if (!method_end) {
         clog(CLOG_ERROR, "Malformed request line. Ignoring");
-        return (http_request_t){0};
+        return (http_t){0};
     }
     size_t method_len = method_end - method_start;
 
     request.method = http_method_from_str(method_start, method_len);
     if (request.method < 0) {
         clog(CLOG_ERROR, "Invalid HTTP method %.*s", (int)method_len, method_start);
-        return (http_request_t){0};
+        return (http_t){0};
     }
 
     char *path_start = method_end + 1;
@@ -128,7 +166,7 @@ http_request_t http_request_parse(char *buf, size_t len) {
     char *path_end = memchr(path_start, ' ', path_remaining);
     if (!path_end) {
         clog(CLOG_ERROR, "Malformed request. Ignoring");
-        return (http_request_t){0};
+        return (http_t){0};
     }
     size_t path_len = path_end - path_start;
 
@@ -137,61 +175,85 @@ http_request_t http_request_parse(char *buf, size_t len) {
 
     if (version_len != 8 || memcmp(version_start, "HTTP/1.1", 8) != 0) {
         clog(CLOG_ERROR, "Unsupported HTTP version %.*s", (int)version_len, version_start);
-        return (http_request_t){0};
+        return (http_t){0};
     }
     request.version = HTTP_VERSION_1_1;
     request.path = pstrndup(path_start, path_len);
 
+    char *headers_start = line_end + 1;
+    size_t headers_remaining = len - (headers_start - buffer);
+
+    char *body_start = NULL;
+    char *blank_crlf = memmem(headers_start, headers_remaining, "\r\n\r\n", 4);
+    char *blank_lf = memmem(headers_start, headers_remaining, "\n\n", 2);
+    char *header_block_end = headers_start + headers_remaining;
+    if (blank_crlf && (!blank_lf || blank_crlf <= blank_lf)) {
+        header_block_end = blank_crlf;
+        body_start = blank_crlf + 4;
+    } else if (blank_lf) {
+        header_block_end = blank_lf;
+        body_start = blank_lf + 2;
+    }
+
     char *line;
-    for (line = strtok(line_end + 1, "\n"); line; line = strtok(NULL, "\n")) {
+    char *header_block = pstrndup(headers_start, header_block_end - headers_start);
+    for (line = strtok(header_block, "\n"); line; line = strtok(NULL, "\n")) {
         size_t hlen = strlen(line);
         if (hlen > 0 && line[hlen - 1] == '\r') line[hlen - 1] = '\0';
 
         char *colon = strchr(line, ':');
         if (!colon) continue;
 
-        size_t key_len = colon - line;
+        *colon = '\0';
         char *value = colon + 1;
         while (*value == ' ') value++;
 
-        if (key_len == 10 && strncasecmp(line, "Connection", 10) == 0) {
-            request.connection = (strcasecmp(value, "close") == 0)
-                ? HTTP_CONNECTION_CLOSE
-                : HTTP_CONNECTION_KEEP_ALIVE;
-            clog(CLOG_TRACE, "Parsed Connection header: %s", value);
-        }
+        http_set_header(&request, line, value);
     }
 
+    char *content_length_str = http_get_header(&request, "Content-Length");
+    size_t content_length = content_length_str ? strtoul(content_length_str, NULL, 10) : 0;
+
+    if (content_length > 0 && body_start) {
+        size_t available = (buffer + len) - body_start;
+        size_t body_len = content_length < available ? content_length : available;
+        request.body = pmemdup(body_start, body_len);
+        request.body_len = body_len;
+
+        if (available < content_length) {
+            clog(CLOG_WARNING, "Truncated request body: got %zu of %zu bytes (Content-Length)",
+                 available, content_length);
+        }
+    }
 
     return request;
 }
 
 
-void http_send_response(int fd, http_response_t response) {
+void http_send_response(int fd, http_t response) {
     char header[1024];
     time_t now = time(NULL);
     struct tm *tm_info = gmtime(&now);
     char date[32];
     strftime(date, sizeof(date), "%a, %d %b %Y %H:%M:%S GMT", tm_info);
-    
-    size_t header_len = snprintf(header, sizeof(header),
-        "HTTP/1.1 %i %s\r\nDate: %s\r\nServer: Foxtails\r\nContent-Type: %s\r\nContent-Length: %zu\r\n",
-        response.code, response.reason, date, mime_type_str(response.mime_type), response.content_len);
 
-    if (response.location) {
-        header_len += snprintf(header + header_len, sizeof(header) - header_len,
-            "Location: %s\r\n", response.location);
+    if (!http_has_header(&response, "Content-Type")) {
+        http_set_content_type(&response, MIME_TEXT_PLAIN);
     }
 
-    if (response.retry_in > 0) {
+    size_t header_len = snprintf(header, sizeof(header),
+        "HTTP/1.1 %i %s\r\nDate: %s\r\nServer: Foxtails\r\nContent-Length: %zu\r\n",
+        response.code, response.reason, date, response.body_len);
+
+    http_foreach_header(&response, h) {
         header_len += snprintf(header + header_len, sizeof(header) - header_len,
-            "Retry-After: %lld\r\n", (long long)response.retry_in);
+            "%s: %s\r\n", h->name, h->value);
     }
 
     header_len += snprintf(header + header_len, sizeof(header) - header_len, "\r\n");
 
 
-    size_t response_len = header_len + response.content_len;
+    size_t response_len = header_len + response.body_len;
     char *resp = palloc(response_len + 1);
     if (!resp) {
         clog(CLOG_ERROR, "Failed to allocate memory for response (fd=%d)", fd);
@@ -199,7 +261,7 @@ void http_send_response(int fd, http_response_t response) {
     }
 
     memcpy(resp, header, header_len);
-    memcpy(resp + header_len, response.content, response.content_len);
+    memcpy(resp + header_len, response.body, response.body_len);
 
     ssize_t sent = send(fd, resp, response_len, 0);
     if (sent < 0) {
