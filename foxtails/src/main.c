@@ -1,5 +1,5 @@
-#include "routing.h"
-#include "server.h"
+#include <routing.h>
+#include <server.h>
 #include <signal.h>
 #include <sys/epoll.h>
 #include <workers.h>
@@ -27,15 +27,12 @@ static bool running = true;
 void sigint(int _) {(void)_;running = false;}
 
 int main(void) {
-    cpool_t mempool = cpool_init(1024);
+    cpool_t mempool = cpool_init(4096);
     signal(SIGINT, sigint);
     clog_set_fmt("[Foxtails] " CLOG_PRETTY_FMT);
 
     config = config_parse("foxtails.conf");
     clog_muted_level = config_get_int(config, "server", "log-level");
-
-    int port = config_get_int(config, "server", "port");
-    if (!port) port = 8080;
 
     int num_workers = config_get_int(config, "server", "num-workers");
     if (!num_workers) num_workers = 8;
@@ -49,7 +46,19 @@ int main(void) {
 
     routes = routes_parse("routes.conf");
 
-    server_t server = server_init(max_connections, num_workers, port);
+    char *unix_socket_path = config_get(config, "server", "unix-socket");
+    int port = config_get_int(config, "server", "port");
+
+    bind_spec_t bind;
+    if (unix_socket_path && port) {
+        clog(CLOG_FATAL, "foxtails.conf: 'port' and 'unix-socket' are mutually exclusive");
+        exit(1);
+    } else if (unix_socket_path) {
+        bind = (bind_spec_t){ .kind = BIND_UNIX, .path = unix_socket_path };
+    } else {
+        bind = (bind_spec_t){ .kind = BIND_TCP, .tcp = { .port = port ? port : 8080 } };
+    }
+    server_t server = server_init(max_connections, num_workers, bind);
 
     http_socket_listen(server.socket, server.workers);
     clog(CLOG_INFO, "Foxtails listening on *:%i", port);

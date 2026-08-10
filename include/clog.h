@@ -84,12 +84,6 @@ THE SOFTWARE.
 #define CLOG_COLOR_ITALIC     "\x1b[3m"
 #endif //_MSC_VER
 
-#ifdef _MSC_VER
-#define CLOG_THREAD_LOCAL __declspec(thread)
-#else
-#define CLOG_THREAD_LOCAL __thread
-#endif //_MSC_VER
-
 #define CLOG_SEVERITY_DEBUG   0
 #define CLOG_SEVERITY_TRACE   1
 #define CLOG_SEVERITY_INFO    2
@@ -98,16 +92,23 @@ THE SOFTWARE.
 #define CLOG_SEVERITY_FATAL   5
 
 #ifndef __FUNCTION_NAME__
-    #ifdef WIN32   //WINDOWS 
-        #ifdef _MSC_VER
-            #define __FUNCTION_NAME__ __func__
-        #else
-            #define __FUNCTION_NAME__   __PRETTY_FUNCTION__ 
-        #endif //__MSC_VER
-    #else          //*NIX
-        #define __FUNCTION_NAME__   __PRETTY_FUNCTION__ 
+    #if (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L) || \
+        (defined(__cplusplus) && __cplusplus >= 201103L)
+        #define __FUNCTION_NAME__ __func__
+    #elif defined(_MSC_VER)
+        #define __FUNCTION_NAME__ __FUNCSIG__
+    #elif defined(__GNUC__) || defined(__clang__)
+        #define __FUNCTION_NAME__ __PRETTY_FUNCTION__
+    #else
+        #define __FUNCTION_NAME__ __FUNCTION__
     #endif
 #endif
+
+#ifdef _MSC_VER
+#define CLOG_THREAD_LOCAL __declspec(thread)
+#else
+#define CLOG_THREAD_LOCAL __thread
+#endif //_MSC_VER
 
 #if defined(__cplusplus)
 extern "C" {
@@ -117,11 +118,7 @@ extern "C" {
 #define CLOG_BUF_LIMIT 1024
 #endif
 
-#ifdef _MSC_VER
 #define CLOG_REGISTER_LEVEL(name_, color_, severity_) {.name = name_, .color = color_, .severity = severity_}
-#else 
-#define CLOG_REGISTER_LEVEL(name_, color_, severity_) (const clog_level_t) {.name = name_, .color = color_, .severity = severity_}
-#endif //_MSC_VER
 
 typedef struct clog_level {
     const char *name;
@@ -149,13 +146,15 @@ extern const clog_level_t CLOG_FATAL;
 
 #include <stdio.h>
 
-extern FILE *clog_output_fd;
+extern CLOG_THREAD_LOCAL FILE *clog_output_fd;
 extern CLOG_THREAD_LOCAL char *clog_fmt;
+extern CLOG_THREAD_LOCAL char *clog_time_fmt;
 extern const char *clog_fmt_default;
-extern char *clog_time_fmt;
 extern int clog_muted_level;
+extern int(*clog_callback)(const char *line);
 
 void __clog(clog_level_t level, const char *file, int line, const char *func, const char *fmt, ...);
+int clog_default_callback(const char *line);
 #ifndef CLOG_NO_TIME
 char *clog_get_timestamp();
 #else
@@ -164,6 +163,8 @@ char *clog_get_timestamp() {return "";}
 
 #define clog_assert(expr) if (!(expr)) {clog(CLOG_FATAL, "Assertion \""#expr"\" failed! exiting..."); exit(1);}
 #define clog_assert_m(expr, msg) if (!(expr)) {clog(CLOG_FATAL, "Assertion \""#expr"\" failed! %s", msg);exit(1);}
+
+#endif //_CLOG_H
 
 #ifdef CLOG_IMPLEMENTATION
 #include <stdlib.h>
@@ -190,15 +191,23 @@ int clog_muted_level = -1;
 int __clog_errno = 0;
 char __clog_timebuf[50];
 
-FILE *clog_output_fd = 0;
+int(*clog_callback)(const char *line) = clog_default_callback;
+
+CLOG_THREAD_LOCAL FILE *clog_output_fd = 0;
 #ifndef CLOG_NO_TIME
     const char *clog_fmt_default = "%t: %f:%l (%F()) -> %c[%L]%r: %m";
     CLOG_THREAD_LOCAL char *clog_fmt = (char*)"%t: %f:%l (%F()) -> %c[%L]%r: %m";
-    char *clog_time_fmt = (char*)"%h:%m:%s.%u";
+    CLOG_THREAD_LOCAL char *clog_time_fmt = (char*)"%h:%m:%s.%u";
 #else
     const char *clog_fmt_default = (char*)"%f:%l (%F()) -> %c[%L]%r: %m";
     CLOG_THREAD_LOCAL char *clog_fmt = (char*)"%f:%l (%F()) -> %c[%L]%r: %m";
 #endif
+
+int clog_default_callback(const char *line) {
+    if (clog_output_fd == stdout || clog_output_fd == stderr) fprintf(clog_output_fd, "%s%s\n", line, CLOG_COLOR_RESET);
+    else fprintf(clog_output_fd, "%s\n", line);
+    return 0;
+}
 
 size_t __clog_buffer_size(const char *fmt, va_list args) {
     int res = vsnprintf(NULL, 0, fmt, args);
@@ -274,8 +283,14 @@ void __clog(clog_level_t level, const char *file, int line, const char *func, co
         if (curchr == '%') {
             curchr = clog_fmt[++i];
             switch (curchr) {
-                case 'c': len += __clog_sprintf(target + len, len, CLOG_BUF_LIMIT, level.color);            break;
-                case 'r': len += __clog_sprintf(target + len, len, CLOG_BUF_LIMIT, CLOG_COLOR_RESET);       break;
+                case 'c': if (clog_output_fd == stdout || clog_output_fd == stderr) {
+                              len += __clog_sprintf(target + len, len, CLOG_BUF_LIMIT, level.color);
+                          }
+                          break;
+                case 'r': if (clog_output_fd == stdout || clog_output_fd == stderr) {
+                              len += __clog_sprintf(target + len, len, CLOG_BUF_LIMIT, CLOG_COLOR_RESET);
+                          }
+                          break;
                 case 'L': len += __clog_sprintf(target + len, len, CLOG_BUF_LIMIT, level.name);             break;
                 case 'f': len += __clog_sprintf(target + len, len, CLOG_BUF_LIMIT, file);                   break;
                 case 'l': len += __clog_sprintf(target + len, len, CLOG_BUF_LIMIT, "%i", line);             break;
@@ -291,9 +306,10 @@ void __clog(clog_level_t level, const char *file, int line, const char *func, co
         }
     }
     va_end(args);
-
-    if (clog_output_fd == stdout || clog_output_fd == stderr) fprintf(clog_output_fd, "%s%s\n", target, CLOG_COLOR_RESET);
-    else fprintf(clog_output_fd, "%s\n", target);
+    int res = clog_callback(target);
+    if (res) {
+        clog_default_callback(target);
+    }
 }
 
 
@@ -351,5 +367,3 @@ char *clog_get_timestamp() {
 #if defined(__cplusplus)
 }
 #endif //__cplusplus
-
-#endif //_CLOG_H
