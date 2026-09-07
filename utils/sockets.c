@@ -1,5 +1,6 @@
 #include "server.h"
-#include <asm-generic/errno.h>
+#include <assert.h>
+#include <errno.h>
 #include <errno.h>
 #include <sockets.h>
 #include <workers.h>
@@ -14,7 +15,7 @@
 #include <netinet/in.h>
 
 
-socket_t http_socket_create(int port) {
+socket_t socket_create_http(int port) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
         clog(CLOG_FATAL, "Failed to create socket: %s", strerror(errno));
@@ -30,12 +31,16 @@ socket_t http_socket_create(int port) {
 
     socket_t ret = {0};
     ret.fd = fd;
-    ret.address.sin_family = AF_INET;
-    ret.address.sin_addr.s_addr = INADDR_ANY;
-    ret.address.sin_port = htons(port);
+    ret.address = malloc(sizeof(struct sockaddr_in));
+    assert(ret.address);
 
-    if (bind(ret.fd, (struct sockaddr*)&ret.address, sizeof(ret.address))) {
+    ((struct sockaddr_in*)ret.address)->sin_family = AF_INET;
+    ((struct sockaddr_in*)ret.address)->sin_addr.s_addr = INADDR_ANY;
+    ((struct sockaddr_in*)ret.address)->sin_port = htons(port);
+
+    if (bind(ret.fd, ret.address, sizeof(*(struct sockaddr_in*)ret.address))) {
         clog(CLOG_FATAL, "Failed to bind to port %i: %s", port, strerror(errno));
+        free(ret.address);
         close(ret.fd);
         exit(1);
     }
@@ -47,7 +52,7 @@ socket_t http_socket_create(int port) {
     return ret;
 }
 
-void http_socket_listen(socket_t sock, worker_pool_t worker_pool) {
+void socket_listen(socket_t sock, worker_pool_t worker_pool) {
     if (listen(sock.fd, worker_pool.num_workers) < 0) {
         clog(CLOG_FATAL, "Listen failed: %s", strerror(errno));
         exit(1);
@@ -55,9 +60,9 @@ void http_socket_listen(socket_t sock, worker_pool_t worker_pool) {
     clog(CLOG_TRACE, "Listening on fd=%d with backlog %u", sock.fd, worker_pool.num_workers);
 }
 
-bool http_socket_accept(socket_t sock, socket_t *client) {
-    socklen_t addrlen = sizeof(client->address);
-    client->fd = accept(sock.fd, (struct sockaddr*)&client->address, &addrlen);
+bool socket_accept(socket_t sock, socket_t *client) {
+    socklen_t addrlen = sizeof(*(struct sockaddr_in *)client->address);
+    client->fd = accept(sock.fd, client->address, &addrlen);
 
     if (client->fd < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -71,9 +76,13 @@ bool http_socket_accept(socket_t sock, socket_t *client) {
     int flags = fcntl(client->fd, F_GETFL, 0);
     fcntl(client->fd, F_SETFL, flags | O_NONBLOCK);
 
+    client->address = calloc(1, sizeof(struct sockaddr_in));
+    assert(client->address);
+
     return true;
 }
 
 void dispatch_client(worker_pool_t *pool, client_t *client) {
     dispatch_command(pool, WORKER_ACTION_NEW_CLIENT, client, sizeof(*client));
 }
+

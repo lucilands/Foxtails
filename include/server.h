@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <time.h>
+#include <netinet/in.h>
 
 
 struct server;

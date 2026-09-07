@@ -37,7 +37,7 @@ server_t server_init(int max_connections, int num_workers, int port) {
     clog(CLOG_INFO, "Starting worker pool with %i worker threads", num_workers);
     server.workers = worker_pool_init(num_workers);
 
-    server.socket = http_socket_create(port);
+    server.socket = socket_create_http(port);
     clog(CLOG_TRACE, "Created socket on port %i", port);
 
     cpool_align(__alignof__(client_t));
@@ -115,7 +115,7 @@ void server_append_client(server_t *server, socket_t client, time_t oldest_clien
         .serv = server,
         .idx = free_idx
     };
-    if (!inet_ntop(AF_INET, &client.address.sin_addr, server->clients[free_idx].ip_addr, sizeof(server->clients[free_idx].ip_addr))) {
+    if (!inet_ntop(AF_INET, &((struct sockaddr_in*)client.address)->sin_addr, server->clients[free_idx].ip_addr, sizeof(server->clients[free_idx].ip_addr))) {
         clog(CLOG_WARNING, "Failed to format client address for fd=%d: %s", client.fd, strerror(errno));
         server->clients[free_idx].ip_addr[0] = '\0';
     }
@@ -153,6 +153,7 @@ void server_delete(server_t server) {
     clog(CLOG_INFO, "Shutting down server");
     pthread_mutex_destroy(&server.free_list.lock);
     close(server.socket.fd);
+    free(server.socket.address);
     close(server.epoll_instance);
     worker_pool_delete(server.workers);
     clog(CLOG_INFO, "Server shut down");

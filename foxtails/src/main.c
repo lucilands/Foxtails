@@ -49,7 +49,7 @@ int main(void) {
     int port = config_get_int(config, "server", "port");
     server_t server = server_init(max_connections, num_workers, port ? port : 8080);
 
-    http_socket_listen(server.socket, server.workers);
+    socket_listen(server.socket, server.workers);
     clog(CLOG_INFO, "Foxtails listening on *:%i", port);
 
     struct epoll_event events[32] = {0};
@@ -87,7 +87,7 @@ int main(void) {
                     continue;
                 }
                 socket_t client;
-                while (http_socket_accept(server.socket, &client)) {
+                while (socket_accept(server.socket, &client)) {
                     server_append_client(&server, client, oldest_timestamp);
                 }
             }
