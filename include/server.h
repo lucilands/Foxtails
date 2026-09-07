@@ -15,7 +15,7 @@ typedef struct client {
     int idx;
     struct server *serv;
     bool is_alive;
-    char ip_addr[INET_ADDRSTRLEN]; // Set once in server_append_client; no per-connection allocation needed.
+    char ip_addr[INET_ADDRSTRLEN];
 } client_t;
 
 typedef struct {
@@ -26,9 +26,7 @@ typedef struct {
     pthread_mutex_t lock;
 } int_stack_t;
 
-// Returns false (and logs) instead of writing past `stack->capacity`.
 bool int_stack_push(int_stack_t *stack, int value);
-// Returns -1 (and logs) instead of reading past an empty stack.
 int int_stack_pop(int_stack_t *stack);
 
 typedef struct server {
@@ -40,7 +38,8 @@ typedef struct server {
     int_stack_t free_list;
 } server_t;
 
-server_t server_init(int max_connections, int num_workers, int port);
+server_t server_init_http(int max_connections, int num_workers, int port);
+server_t server_init_unix(int max_connections, int num_workers, char *path);
 void server_delete(server_t server);
 
 void server_append_client(server_t *server, socket_t client, time_t oldest_client);

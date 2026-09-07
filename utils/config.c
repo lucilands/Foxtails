@@ -107,6 +107,7 @@ char* config_get(config_t conf, char *section, char *key) {
                 size_t value_off = (key_end+1) - line;
                 size_t value_len = value_end - (key_end+1);
                 cpool_restore();
+                while (isspace(*(cur_line_start + value_off))) {value_off++; value_len--;}
                 return pstrndup(cur_line_start + value_off, value_len);
             }
             cpool_restore();

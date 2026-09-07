@@ -46,8 +46,11 @@ int main(void) {
 
     routes = routes_parse("routes.conf");
 
+    char *unix_path = config_get(config, "server", "path");
     int port = config_get_int(config, "server", "port");
-    server_t server = server_init(max_connections, num_workers, port ? port : 8080);
+    server_t server = {0};
+    if (!unix_path) server = server_init_http(max_connections, num_workers, port ? port : 8080);
+    else server = server_init_unix(max_connections, num_workers, unix_path);
 
     socket_listen(server.socket, server.workers);
     clog(CLOG_INFO, "Foxtails listening on *:%i", port);

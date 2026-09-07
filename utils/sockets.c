@@ -13,6 +13,7 @@
 
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <sys/un.h>
 
 
 socket_t socket_create_http(int port) {
@@ -80,6 +81,44 @@ bool socket_accept(socket_t sock, socket_t *client) {
     assert(client->address);
 
     return true;
+}
+
+socket_t socket_create_unix(char *path) {
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+        clog(CLOG_FATAL, "Failed to create socket: %s", strerror(errno));
+        exit(1);
+    }
+
+    int opt = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
+        clog(CLOG_FATAL, "Failed to set SO_REUSEADDR: %s", strerror(errno));
+        close(fd);
+        exit(1);
+    }
+
+    socket_t ret = {0};
+    ret.fd = fd;
+    ret.address = malloc(sizeof(struct sockaddr_un));
+    assert(ret.address);
+
+    unlink(path);
+    memset(ret.address, 0, sizeof(struct sockaddr_un));
+    ((struct sockaddr_un*)ret.address)->sun_family = AF_UNIX;
+    strncpy(((struct sockaddr_un*)ret.address)->sun_path, path, sizeof(((struct sockaddr_un*)ret.address)->sun_path) - 1);
+
+    if (bind(ret.fd, ret.address, sizeof(struct sockaddr_un))) {
+        clog(CLOG_FATAL, "Failed to bind to path \"%s\": %s", path, strerror(errno));
+        free(ret.address);
+        close(ret.fd);
+        exit(1);
+    }
+
+    int flags = fcntl(ret.fd, F_GETFL, 0);
+    fcntl(ret.fd, F_SETFL, flags | O_NONBLOCK);
+
+    clog(CLOG_TRACE, "Created listening socket fd=%d on path \"%s\"", ret.fd, path);
+    return ret;
 }
 
 void dispatch_client(worker_pool_t *pool, client_t *client) {

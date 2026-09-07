@@ -31,14 +31,13 @@ int int_stack_pop(int_stack_t *stack) {
     return stack->data[--stack->head];
 }
 
-server_t server_init(int max_connections, int num_workers, int port) {
+static server_t server_init_common(int max_connections, int num_workers, socket_t sock) {
     server_t server = {0};
 
     clog(CLOG_INFO, "Starting worker pool with %i worker threads", num_workers);
     server.workers = worker_pool_init(num_workers);
 
-    server.socket = socket_create_http(port);
-    clog(CLOG_TRACE, "Created socket on port %i", port);
+    server.socket = sock;
 
     cpool_align(__alignof__(client_t));
     server.clients = pcalloc(max_connections, sizeof(client_t));
@@ -82,6 +81,18 @@ server_t server_init(int max_connections, int num_workers, int port) {
     pthread_mutex_init(&server.free_list.lock, NULL);
 
     return server;
+}
+
+server_t server_init_http(int max_connections, int num_workers, int port) {
+    socket_t sock = socket_create_http(port);
+    clog(CLOG_TRACE, "Created socket on port %i", port);
+    return server_init_common(max_connections, num_workers, sock);
+}
+
+server_t server_init_unix(int max_connections, int num_workers, char *path) {
+    socket_t sock = socket_create_unix(path);
+    clog(CLOG_TRACE, "Created socket on path %s", path);
+    return server_init_common(max_connections, num_workers, sock);
 }
 
 void server_append_client(server_t *server, socket_t client, time_t oldest_client) {
