@@ -178,7 +178,7 @@ static http_t handle_proxy(http_t *req, route_t *route) {
 
     http_send_request(backend.fd, *req);
     size_t len;
-    char *buf = http_recv_message(backend.fd, &len);
+    char *buf = http_recv_message(backend.fd, &len, req->method != REQUEST_HEAD);
     if (len == 0) {
         clog(CLOG_WARNING, "No response from backend '%s'", route->dest);
         free(buf);
@@ -228,7 +228,7 @@ void worker_callback(void *payload, int type) {
         case WORKER_ACTION_NEW_CLIENT: {
             client_t *client = payload;
             size_t len;
-            char *buf = http_recv_message(client->socket.fd, &len);
+            char *buf = http_recv_message(client->socket.fd, &len, true);
             if (len == 0) {
                 clog(CLOG_DEBUG, "Client closed connection (fd=%d, slot %d)", client->socket.fd, client->idx);
                 free(buf);

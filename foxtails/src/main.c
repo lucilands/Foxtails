@@ -21,6 +21,7 @@
 
 config_t config;
 route_table_t routes;
+int backend_timeout;
 
 static bool running = true;
 
@@ -43,6 +44,10 @@ int main(void) {
     int keep_alive_timeout = config_get_int(config, "server", "keep-alive-timeout");
     if (!keep_alive_timeout) keep_alive_timeout = 75;
     clog(CLOG_TRACE, "Keep-alive timeout: %ds", keep_alive_timeout);
+
+    backend_timeout = config_get_int(config, "backends", "timeout");
+    if (!backend_timeout) backend_timeout = 5;
+    clog(CLOG_TRACE, "Backend timeout: %ds", backend_timeout);
 
     routes = routes_parse("routes.conf");
 

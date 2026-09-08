@@ -99,7 +99,7 @@ typedef struct {
 
 http_t http_request_parse(char *buffer, size_t len);
 http_t http_response_parse(char *buffer, size_t len);
-char *http_recv_message(int fd, size_t *out_len);
+char *http_recv_message(int fd, size_t *out_len, bool expect_body);
 void http_send_response(int fd, http_t response);
 void http_send_request(int fd, http_t request);
 

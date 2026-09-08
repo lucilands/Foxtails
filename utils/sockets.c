@@ -15,6 +15,9 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <sys/un.h>
+#include <sys/time.h>
+
+extern int backend_timeout;
 
 
 socket_t socket_create_http(int port) {
@@ -173,6 +176,11 @@ socket_t socket_create_auto(char *url) {
             free(client.address);
             return (socket_t){0};
         }
+
+        struct timeval timeout_tv = { .tv_sec = backend_timeout, .tv_usec = 0 };
+        setsockopt(client.fd, SOL_SOCKET, SO_RCVTIMEO, &timeout_tv, sizeof(timeout_tv));
+        setsockopt(client.fd, SOL_SOCKET, SO_SNDTIMEO, &timeout_tv, sizeof(timeout_tv));
+
         return client;
     }
     return (socket_t){0};

@@ -346,7 +346,7 @@ void http_send_response(int fd, http_t response) {
     }
 }
 
-char *http_recv_message(int fd, size_t *out_len) {
+char *http_recv_message(int fd, size_t *out_len, bool expect_body) {
     size_t cap = 4096, len = 0, content_length = 0;
     char *buf = malloc(cap);
     char *body_start = NULL;
@@ -356,8 +356,10 @@ char *http_recv_message(int fd, size_t *out_len) {
         len += n;
         if (!body_start && (body_start = memmem(buf, len, "\r\n\r\n", 4))) {
             body_start += 4;
-            char *cl = memmem(buf, body_start - buf, "Content-Length:", 15);
-            if (cl) content_length = strtoul(cl + 15, NULL, 10);
+            if (expect_body) {
+                char *cl = memmem(buf, body_start - buf, "Content-Length:", 15);
+                if (cl) content_length = strtoul(cl + 15, NULL, 10);
+            }
         }
         if (body_start && (size_t)(buf + len - body_start) >= content_length) break;
         if (cap - len < 1024) buf = realloc(buf, cap *= 2);
