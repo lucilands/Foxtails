@@ -1,4 +1,4 @@
-CFLAGS=-Wall -Wextra -std=gnu99 -Iinclude -MMD -MP -flto -Og
+CFLAGS=-Wall -Wextra -std=gnu99 -Iinclude -MMD -MP -flto -Og -ggdb
 LDFLAGS=-lpthread
 
 UTILS_OBJ:=utils/sockets.o\

@@ -10,6 +10,7 @@
 #include <strings.h>
 #include <sys/socket.h>
 
+
 int http_method_from_str(const char *str, size_t len) {
     switch (len) {
         case 3:
@@ -138,7 +139,7 @@ http_t http_request_parse(char *buf, size_t len) {
     char *line_end = memchr(buffer, '\n', len);
     if (!line_end) {
         clog(CLOG_WARNING, "Partial request. Ignoring");
-        return (http_t){0};
+        return REQUEST_TIMEOUT;
     }
     size_t line_len = line_end - buffer;
     if (line_len > 0 && buffer[line_len - 1] == '\r') {
@@ -151,14 +152,14 @@ http_t http_request_parse(char *buf, size_t len) {
     char *method_end = memchr(buffer, ' ', line_len);
     if (!method_end) {
         clog(CLOG_ERROR, "Malformed request line. Ignoring");
-        return (http_t){0};
+        return BAD_REQUEST;
     }
     size_t method_len = method_end - method_start;
 
     request.method = http_method_from_str(method_start, method_len);
     if (request.method < 0) {
         clog(CLOG_ERROR, "Invalid HTTP method %.*s", (int)method_len, method_start);
-        return (http_t){0};
+        return NOT_IMPLEMENTED;
     }
 
     char *path_start = method_end + 1;
@@ -166,7 +167,7 @@ http_t http_request_parse(char *buf, size_t len) {
     char *path_end = memchr(path_start, ' ', path_remaining);
     if (!path_end) {
         clog(CLOG_ERROR, "Malformed request. Ignoring");
-        return (http_t){0};
+        return BAD_REQUEST;
     }
     size_t path_len = path_end - path_start;
 
@@ -175,7 +176,7 @@ http_t http_request_parse(char *buf, size_t len) {
 
     if (version_len != 8 || memcmp(version_start, "HTTP/1.1", 8) != 0) {
         clog(CLOG_ERROR, "Unsupported HTTP version %.*s", (int)version_len, version_start);
-        return (http_t){0};
+        return VERSION_NOT_SUPPORTED;
     }
     request.version = HTTP_VERSION_1_1;
     request.path = pstrndup(path_start, path_len);
@@ -231,7 +232,7 @@ http_t http_request_parse(char *buf, size_t len) {
 
 
 void http_send_response(int fd, http_t response) {
-    char header[1024];
+    char header[4096];
     time_t now = time(NULL);
     struct tm *tm_info = gmtime(&now);
     char date[32];
@@ -252,6 +253,15 @@ void http_send_response(int fd, http_t response) {
 
     header_len += snprintf(header + header_len, sizeof(header) - header_len, "\r\n");
 
+    if (!response.body) {
+        ssize_t sent = send(fd, header, header_len, 0);
+        if (sent < 0) {
+            clog(CLOG_WARNING, "Failed to send response on fd=%d: %s", fd, strerror(errno));
+        } else {
+            clog(CLOG_DEBUG, "Sent %i response (%zu bytes) on fd=%d", response.code, header_len, fd);
+        }
+        return;
+    }
 
     size_t response_len = header_len + response.body_len;
     char *resp = palloc(response_len + 1);

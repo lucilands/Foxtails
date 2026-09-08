@@ -25,14 +25,6 @@
 extern config_t config;
 extern route_table_t routes;
 
-#define NOT_IMPLEMENTED     (http_t) { .code = 501, .reason = "Not Implemented", .body = "Not Implemented", .body_len = sizeof("Not Implemented") - 1, \
-                                        .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 } }
-#define NOT_FOUND           (http_t) { .code = 404, .reason = "Not Found", .body = "Not Found", .body_len = sizeof("Not Found") - 1, \
-                                        .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 } }
-#define BAD_REQUEST         (http_t) { .code = 400, .reason = "Bad Request", .body = "Bad Request", .body_len = sizeof("Bad Request") - 1, \
-                                        .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 } }
-#define HTTP_MOVED(loc)     (http_t) { .code = 301, .reason = "Moved Permanently", .body = "Moved Permanently", .body_len = sizeof("Moved Permanently") - 1, \
-                                        .headers = { .items = {{"Content-Type", "text/plain"}, {"Location", (loc)}}, .len = 2 } }
 
 
 int get_mime_type(const char *path) {
@@ -136,7 +128,11 @@ static http_t serve_path(http_t *req) {
                 http_t resp = get_path(req->path);
                 return resp;
             }
-        case REQUEST_HEAD:
+        case REQUEST_HEAD: {
+                http_t resp = get_path(req->path);
+                resp.body = NULL;
+                return resp;
+            }
             break;
         case REQUEST_POST:
             break;
@@ -145,11 +141,11 @@ static http_t serve_path(http_t *req) {
         case REQUEST_DELETE:
             break;
         case REQUEST_CONNECT:
-            break;
+            return NOT_ALLOWED;
         case REQUEST_OPTIONS:
-            break;
+            return NO_CONTENT;
         case REQUEST_TRACE:
-            break;
+            return NOT_ALLOWED;
         case REQUEST_PATCH:
             break;
 
@@ -211,7 +207,7 @@ void worker_callback(void *payload, int type) {
 
             http_t req = http_request_parse(buf, len);
             if (req.path == NULL) {
-                http_send_response(client->socket.fd, BAD_REQUEST);
+                http_send_response(client->socket.fd, req);
                 clog(CLOG_DEBUG, "Bad request on fd=%d (slot %d); closing", client->socket.fd, client->idx);
                 server_remove_client(client->serv, *client);
                 break;

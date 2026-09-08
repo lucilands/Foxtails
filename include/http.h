@@ -51,6 +51,26 @@ enum {
 #define HTTP_MAX_HEADERS 32
 #endif //HTTP_MAX_HEADERS
 
+#define NOT_IMPLEMENTED     (http_t) { .code = 501, .reason = "Not Implemented", .body = "Not Implemented", .body_len = sizeof("Not Implemented") - 1, \
+                                        .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 } }
+#define NOT_FOUND           (http_t) { .code = 404, .reason = "Not Found", .body = "Not Found", .body_len = sizeof("Not Found") - 1, \
+                                        .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 } }
+#define BAD_REQUEST         (http_t) { .code = 400, .reason = "Bad Request", .body = "Bad Request", .body_len = sizeof("Bad Request") - 1, \
+                                        .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 } }
+#define NOT_ALLOWED         (http_t) { .code = 405, .reason = "Method Not Allowed", .body = "Method Not Allowed", .body_len = sizeof("Method Not Allowed") - 1, \
+                                        .headers = { .items = {{"Content-Type", "text/plain"}, {"Allow", "GET, HEAD, POST, PUT, DELETE, PATCH"}}, .len = 2 } }
+#define NO_CONTENT          (http_t) { .code = 204, .reason = "No Content", .body = NULL, .body_len = 0, \
+                                        .headers = { .items = {{"Allow", "GET, HEAD, POST, PUT, DELETE, PATCH"}}, .len = 1 } }
+#define HTTP_MOVED(loc)     (http_t) { .code = 301, .reason = "Moved Permanently", .body = "Moved Permanently", .body_len = sizeof("Moved Permanently") - 1, \
+                                        .headers = { .items = {{"Content-Type", "text/plain"}, {"Location", (loc)}}, .len = 2 } }
+#define NOT_IMPLEMENTED       (http_t) { .code = 501, .reason = "Not Implemented", .body = "Not Implemented", .body_len = sizeof("Not Implemented") - 1, \
+                                        .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 } }
+#define VERSION_NOT_SUPPORTED (http_t) { .code = 505, .reason = "HTTP Version Not Supported", .body = "HTTP Version Not Supported", .body_len = sizeof("HTTP Version Not Supported") - 1, \
+                                        .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 } }
+#define REQUEST_TIMEOUT       (http_t) { .code = 408, .reason = "Request Timeout", .body = "Request Timeout", .body_len = sizeof("Request Timeout") - 1, \
+                                        .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 } }
+
+
 typedef struct {
     char *name;
     char *value;
