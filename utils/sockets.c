@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 
+#include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <sys/un.h>
@@ -62,10 +63,15 @@ void socket_listen(socket_t sock, worker_pool_t worker_pool) {
 }
 
 bool socket_accept(socket_t sock, socket_t *client) {
-    socklen_t addrlen = sizeof(*(struct sockaddr_in *)client->address);
+    client->address = calloc(1, sizeof(struct sockaddr_in));
+    assert(client->address);
+    socklen_t addrlen = sizeof(struct sockaddr_in);
     client->fd = accept(sock.fd, client->address, &addrlen);
 
     if (client->fd < 0) {
+        free(client->address);
+        client->address = NULL;
+
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             return false;
         }
@@ -76,9 +82,6 @@ bool socket_accept(socket_t sock, socket_t *client) {
 
     int flags = fcntl(client->fd, F_GETFL, 0);
     fcntl(client->fd, F_SETFL, flags | O_NONBLOCK);
-
-    client->address = calloc(1, sizeof(struct sockaddr_in));
-    assert(client->address);
 
     return true;
 }
@@ -119,6 +122,60 @@ socket_t socket_create_unix(char *path) {
 
     clog(CLOG_TRACE, "Created listening socket fd=%d on path \"%s\"", ret.fd, path);
     return ret;
+}
+
+socket_t socket_create_auto(char *url) {
+    if (strlen(url) < strlen("http://")) {
+        clog(CLOG_ERROR, "URL to short");
+        return (socket_t){0};
+    }
+    if (strncmp(url, "http://", strlen("http://")) == 0) {
+        socket_t client = {0};
+
+        client.fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (!client.fd) {
+            clog(CLOG_ERROR, "Failed to connect to backend service at '%s'", url);
+            return (socket_t){0};
+        }
+
+        client.address = malloc(sizeof(struct sockaddr_in));
+        if (!client.address) {
+            close(client.fd);
+            clog(CLOG_ERROR, "Failed to allocate memory");
+            return (socket_t){0};
+        }
+
+        char ip[INET_ADDRSTRLEN] = "";
+        int port = 0;
+
+        int items = sscanf(url, "http://%15[^:]:%i", ip, &port);
+        if (items < 2) {
+            clog(CLOG_ERROR, "Malformed URL '%s'", url);
+            close(client.fd);
+            free(client.address);
+            return (socket_t){0};
+        }
+
+        struct sockaddr_in *addr = (struct sockaddr_in*)client.address;
+        addr->sin_family = AF_INET;
+        addr->sin_port = htons(port);
+
+        if (inet_pton(AF_INET, ip, &addr->sin_addr) <= 0) {
+            clog(CLOG_ERROR, "Invalid IP address");
+            close(client.fd);
+            free(client.address);
+            return (socket_t){0};
+        }
+
+        if (connect(client.fd, client.address, sizeof(*addr)) < 0) {
+            clog(CLOG_ERROR, "connect failed");
+            close(client.fd);
+            free(client.address);
+            return (socket_t){0};
+        }
+        return client;
+    }
+    return (socket_t){0};
 }
 
 void dispatch_client(worker_pool_t *pool, client_t *client) {

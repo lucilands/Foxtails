@@ -114,6 +114,7 @@ void server_append_client(server_t *server, socket_t client, time_t oldest_clien
         http_send_response(client.fd, resp);
 
         close(client.fd);
+        free(client.address);
         clog(CLOG_WARNING, "Client pool exhausted (capacity=%u); rejecting fd=%d with 503 (Retry-After: %llds)",
              server->free_list.capacity, client.fd, (long long)retry_in);
         pthread_mutex_unlock(&server->free_list.lock);
@@ -138,6 +139,7 @@ void server_append_client(server_t *server, socket_t client, time_t oldest_clien
     int result = epoll_ctl(server->epoll_instance, EPOLL_CTL_ADD, client.fd, &event);
     if (result) {
         close(client.fd);
+        free(client.address);
         int_stack_push(&server->free_list, free_idx);
         clog(CLOG_WARNING, "Failed to register fd=%d with epoll: %s. Client will be ignored", client.fd, strerror(errno));
         pthread_mutex_unlock(&server->free_list.lock);
@@ -155,6 +157,7 @@ void server_remove_client(server_t *server, client_t client) {
     }
     int_stack_push(&server->free_list, client.idx);
     close(client.socket.fd);
+    free(client.socket.address);
     clog(CLOG_DEBUG, "Removed client fd=%d from slot %d", client.socket.fd, client.idx);
     server->clients[client.idx].is_alive = false;
     pthread_mutex_unlock(&server->free_list.lock);
@@ -162,6 +165,13 @@ void server_remove_client(server_t *server, client_t client) {
 
 void server_delete(server_t server) {
     clog(CLOG_INFO, "Shutting down server");
+
+    for (unsigned int i = 0; i < server.free_list.capacity; i++) {
+        if (!server.clients[i].is_alive) continue;
+        close(server.clients[i].socket.fd);
+        free(server.clients[i].socket.address);
+    }
+
     pthread_mutex_destroy(&server.free_list.lock);
     close(server.socket.fd);
     free(server.socket.address);

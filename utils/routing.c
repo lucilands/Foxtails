@@ -28,6 +28,7 @@ static bool append_route(route_table_t *routes, route_t route) {
 static int route_str_to_type(const char *str) {
     if (strcasecmp(str, "alias") == 0) return ROUTE_TYPE_ALIAS;
     if (strcasecmp(str, "reroute") == 0) return ROUTE_TYPE_REROUTE;
+    if (strcasecmp(str, "proxy") == 0) return ROUTE_TYPE_PROXY;
     return -1;
 }
 

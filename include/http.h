@@ -69,6 +69,8 @@ enum {
                                         .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 } }
 #define REQUEST_TIMEOUT       (http_t) { .code = 408, .reason = "Request Timeout", .body = "Request Timeout", .body_len = sizeof("Request Timeout") - 1, \
                                         .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 } }
+#define BAD_GATEWAY           (http_t) { .code = 502, .reason = "Bad Gateway", .body = "Bad Gateway", .body_len = sizeof("Bad Gateway") - 1, \
+                                        .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 } }
 
 
 typedef struct {
@@ -96,7 +98,10 @@ typedef struct {
 } http_t;
 
 http_t http_request_parse(char *buffer, size_t len);
+http_t http_response_parse(char *buffer, size_t len);
+char *http_recv_message(int fd, size_t *out_len);
 void http_send_response(int fd, http_t response);
+void http_send_request(int fd, http_t request);
 
 bool http_set_header(http_t *msg, const char *name, const char *value);
 char *http_get_header(const http_t *msg, const char *name);

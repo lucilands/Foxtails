@@ -4,6 +4,7 @@
 enum {
     ROUTE_TYPE_ALIAS = 0,
     ROUTE_TYPE_REROUTE,
+    ROUTE_TYPE_PROXY,
 };
 
 typedef struct {

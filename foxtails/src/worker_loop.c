@@ -100,7 +100,12 @@ http_t get_path(const char *url) {
 
     if (sb.st_size == 0) {
         close(fd);
-        return NOT_FOUND;
+        resp.code = 200;
+        resp.reason = "OK";
+        http_set_content_type(&resp, get_mime_type(full_path));
+        resp.body = NULL;
+        resp.body_len = 0;
+        return resp;
     }
 
     char *content = mmap(NULL, sb.st_size, PROT_READ, MAP_SHARED, fd, 0);
@@ -167,11 +172,36 @@ static http_t handle_reroute(http_t *req, route_t *route) {
     return HTTP_MOVED(route->dest);
 }
 
+static http_t handle_proxy(http_t *req, route_t *route) {
+    clog(CLOG_TRACE, "Proxy '%s' -> '%s'", req->path, route->dest);
+    socket_t backend = socket_create_auto(route->dest);
+    if (backend.address == NULL) return NOT_FOUND;
+
+    http_send_request(backend.fd, *req);
+    size_t len;
+    char *buf = http_recv_message(backend.fd, &len);
+    if (len == 0) {
+        clog(CLOG_WARNING, "No response from backend '%s'", route->dest);
+        free(buf);
+        close(backend.fd);
+        free(backend.address);
+        return BAD_GATEWAY;
+    }
+
+    http_t resp = http_response_parse(buf, len);
+    free(buf);
+    close(backend.fd);
+    free(backend.address);
+    if (req->method == REQUEST_HEAD) resp.body = NULL;
+    return resp;
+}
+
 typedef http_t (*route_handler_t)(http_t *req, route_t *route);
 
 static route_handler_t route_handlers[] = {
     [ROUTE_TYPE_ALIAS]   = handle_alias,
     [ROUTE_TYPE_REROUTE] = handle_reroute,
+    [ROUTE_TYPE_PROXY]   = handle_proxy,
 };
 
 http_t fetch_response(http_t req) {
@@ -179,8 +209,14 @@ http_t fetch_response(http_t req) {
 
     for (unsigned int i = 0; i < routes.len; i++) {
         route_t *route = &routes.routes[i];
-        if (strcmp(req.path, route->src) == 0 && (route->methods & req.method)) {
+        if (!(route->methods & req.method)) {continue;}
+        if (strcmp(req.path, route->src) == 0) {
             return route_handlers[route->type](&req, route);
+        }
+        else if (route->type == ROUTE_TYPE_PROXY) {
+            if (strncmp(req.path, route->src, strlen(route->src)) == 0) {
+                return route_handlers[route->type](&req, route);
+            }
         }
     }
 
@@ -192,20 +228,17 @@ void worker_callback(void *payload, int type) {
         case WORKER_ACTION_NOOP: break;
         case WORKER_ACTION_NEW_CLIENT: {
             client_t *client = payload;
-            char buf[1024];
-            int len = recv(client->socket.fd, buf, 1024, 0);
-            if (len < 0) {
-                clog(CLOG_WARNING, "recv failed on fd=%d (slot %d): %s", client->socket.fd, client->idx, strerror(errno));
-                server_remove_client(client->serv, *client);
-                break;
-            }
+            size_t len;
+            char *buf = http_recv_message(client->socket.fd, &len);
             if (len == 0) {
                 clog(CLOG_DEBUG, "Client closed connection (fd=%d, slot %d)", client->socket.fd, client->idx);
+                free(buf);
                 server_remove_client(client->serv, *client);
                 break;
             }
 
             http_t req = http_request_parse(buf, len);
+            free(buf);
             if (req.path == NULL) {
                 http_send_response(client->socket.fd, req);
                 clog(CLOG_DEBUG, "Bad request on fd=%d (slot %d); closing", client->socket.fd, client->idx);

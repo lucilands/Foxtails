@@ -133,17 +133,76 @@ bool http_is_keep_alive(const http_t *msg) {
     return !(value && strcasecmp(value, "close") == 0);
 }
 
-http_t http_request_parse(char *buf, size_t len) {
-    char *buffer = pmemdup(buf, len);
-
+static char *http_first_line(char *buffer, size_t len, size_t *out_line_len) {
     char *line_end = memchr(buffer, '\n', len);
-    if (!line_end) {
-        clog(CLOG_WARNING, "Partial request. Ignoring");
-        return REQUEST_TIMEOUT;
-    }
+    if (!line_end) return NULL;
+
     size_t line_len = line_end - buffer;
     if (line_len > 0 && buffer[line_len - 1] == '\r') {
         line_len--;  /* strip trailing \r */
+    }
+
+    *out_line_len = line_len;
+    return line_end;
+}
+
+static void http_parse_headers_and_body(http_t *msg, char *buffer, size_t len, char *headers_start) {
+    size_t headers_remaining = len - (headers_start - buffer);
+
+    char *body_start = NULL;
+    char *blank_crlf = memmem(headers_start, headers_remaining, "\r\n\r\n", 4);
+    char *blank_lf = memmem(headers_start, headers_remaining, "\n\n", 2);
+    char *header_block_end = headers_start + headers_remaining;
+    if (blank_crlf && (!blank_lf || blank_crlf <= blank_lf)) {
+        header_block_end = blank_crlf;
+        body_start = blank_crlf + 4;
+    } else if (blank_lf) {
+        header_block_end = blank_lf;
+        body_start = blank_lf + 2;
+    }
+
+    char *line;
+    char *header_block = pstrndup(headers_start, header_block_end - headers_start);
+    for (line = strtok(header_block, "\n"); line; line = strtok(NULL, "\n")) {
+        size_t hlen = strlen(line);
+        if (hlen > 0 && line[hlen - 1] == '\r') line[hlen - 1] = '\0';
+
+        char *colon = strchr(line, ':');
+        if (!colon) continue;
+
+        *colon = '\0';
+        char *value = colon + 1;
+        while (*value == ' ') value++;
+
+        http_set_header(msg, line, value);
+    }
+
+    char *content_length_str = http_get_header(msg, "Content-Length");
+    size_t content_length = content_length_str ? strtoul(content_length_str, NULL, 10) : 0;
+
+    if (content_length > 0 && body_start) {
+        size_t available = (buffer + len) - body_start;
+        size_t body_len = content_length < available ? content_length : available;
+        if (body_len > 0) {
+            msg->body = pmemdup(body_start, body_len);
+            msg->body_len = body_len;
+        }
+
+        if (available < content_length) {
+            clog(CLOG_WARNING, "Truncated body: got %zu of %zu bytes (Content-Length)",
+                 available, content_length);
+        }
+    }
+}
+
+http_t http_request_parse(char *buf, size_t len) {
+    char *buffer = pmemdup(buf, len);
+
+    size_t line_len;
+    char *line_end = http_first_line(buffer, len, &line_len);
+    if (!line_end) {
+        clog(CLOG_WARNING, "Partial request. Ignoring");
+        return REQUEST_TIMEOUT;
     }
 
     http_t request = {0};
@@ -181,53 +240,59 @@ http_t http_request_parse(char *buf, size_t len) {
     request.version = HTTP_VERSION_1_1;
     request.path = pstrndup(path_start, path_len);
 
-    char *headers_start = line_end + 1;
-    size_t headers_remaining = len - (headers_start - buffer);
-
-    char *body_start = NULL;
-    char *blank_crlf = memmem(headers_start, headers_remaining, "\r\n\r\n", 4);
-    char *blank_lf = memmem(headers_start, headers_remaining, "\n\n", 2);
-    char *header_block_end = headers_start + headers_remaining;
-    if (blank_crlf && (!blank_lf || blank_crlf <= blank_lf)) {
-        header_block_end = blank_crlf;
-        body_start = blank_crlf + 4;
-    } else if (blank_lf) {
-        header_block_end = blank_lf;
-        body_start = blank_lf + 2;
-    }
-
-    char *line;
-    char *header_block = pstrndup(headers_start, header_block_end - headers_start);
-    for (line = strtok(header_block, "\n"); line; line = strtok(NULL, "\n")) {
-        size_t hlen = strlen(line);
-        if (hlen > 0 && line[hlen - 1] == '\r') line[hlen - 1] = '\0';
-
-        char *colon = strchr(line, ':');
-        if (!colon) continue;
-
-        *colon = '\0';
-        char *value = colon + 1;
-        while (*value == ' ') value++;
-
-        http_set_header(&request, line, value);
-    }
-
-    char *content_length_str = http_get_header(&request, "Content-Length");
-    size_t content_length = content_length_str ? strtoul(content_length_str, NULL, 10) : 0;
-
-    if (content_length > 0 && body_start) {
-        size_t available = (buffer + len) - body_start;
-        size_t body_len = content_length < available ? content_length : available;
-        request.body = pmemdup(body_start, body_len);
-        request.body_len = body_len;
-
-        if (available < content_length) {
-            clog(CLOG_WARNING, "Truncated request body: got %zu of %zu bytes (Content-Length)",
-                 available, content_length);
-        }
-    }
+    http_parse_headers_and_body(&request, buffer, len, line_end + 1);
 
     return request;
+}
+
+http_t http_response_parse(char *buf, size_t len) {
+    char *buffer = pmemdup(buf, len);
+
+    size_t line_len;
+    char *line_end = http_first_line(buffer, len, &line_len);
+    if (!line_end) {
+        clog(CLOG_WARNING, "Partial response. Ignoring");
+        return BAD_GATEWAY;
+    }
+
+    http_t response = {0};
+
+    char *version_start = buffer;
+    char *version_end = memchr(buffer, ' ', line_len);
+    if (!version_end) {
+        clog(CLOG_ERROR, "Malformed status line. Ignoring");
+        return BAD_GATEWAY;
+    }
+    size_t version_len = version_end - version_start;
+
+    if (version_len != 8 || memcmp(version_start, "HTTP/1.1", 8) != 0) {
+        clog(CLOG_ERROR, "Unsupported HTTP version %.*s", (int)version_len, version_start);
+        return VERSION_NOT_SUPPORTED;
+    }
+    response.version = HTTP_VERSION_1_1;
+
+    char *code_start = version_end + 1;
+    size_t code_remaining = line_len - version_len - 1;
+    char *code_end = memchr(code_start, ' ', code_remaining);
+    if (!code_end) {
+        clog(CLOG_ERROR, "Malformed status line. Ignoring");
+        return BAD_GATEWAY;
+    }
+    size_t code_len = code_end - code_start;
+
+    char code_buf[16];
+    if (code_len >= sizeof(code_buf)) code_len = sizeof(code_buf) - 1;
+    memcpy(code_buf, code_start, code_len);
+    code_buf[code_len] = '\0';
+    response.code = atoi(code_buf);
+
+    char *reason_start = code_end + 1;
+    size_t reason_len = line_len - (reason_start - buffer);
+    response.reason = pstrndup(reason_start, reason_len);
+
+    http_parse_headers_and_body(&response, buffer, len, line_end + 1);
+
+    return response;
 }
 
 
@@ -278,5 +343,68 @@ void http_send_response(int fd, http_t response) {
         clog(CLOG_WARNING, "Failed to send response on fd=%d: %s", fd, strerror(errno));
     } else {
         clog(CLOG_DEBUG, "Sent %i response (%zu bytes) on fd=%d", response.code, response_len, fd);
+    }
+}
+
+char *http_recv_message(int fd, size_t *out_len) {
+    size_t cap = 4096, len = 0, content_length = 0;
+    char *buf = malloc(cap);
+    char *body_start = NULL;
+    ssize_t n;
+
+    while ((n = recv(fd, buf + len, cap - len, 0)) > 0) {
+        len += n;
+        if (!body_start && (body_start = memmem(buf, len, "\r\n\r\n", 4))) {
+            body_start += 4;
+            char *cl = memmem(buf, body_start - buf, "Content-Length:", 15);
+            if (cl) content_length = strtoul(cl + 15, NULL, 10);
+        }
+        if (body_start && (size_t)(buf + len - body_start) >= content_length) break;
+        if (cap - len < 1024) buf = realloc(buf, cap *= 2);
+    }
+    *out_len = len;
+    return buf;
+}
+
+void http_send_request(int fd, http_t request) {
+    char header[4096];
+
+    size_t header_len = snprintf(header, sizeof(header),
+        "%s %s HTTP/1.1\r\nContent-Length: %zu\r\n",
+        http_method_to_str(request.method), request.path, request.body_len);
+
+    http_foreach_header(&request, h) {
+        if (strcasecmp(h->name, "Content-Length") == 0) continue;
+        header_len += snprintf(header + header_len, sizeof(header) - header_len,
+            "%s: %s\r\n", h->name, h->value);
+    }
+
+    header_len += snprintf(header + header_len, sizeof(header) - header_len, "\r\n");
+
+    if (!request.body) {
+        ssize_t sent = send(fd, header, header_len, 0);
+        if (sent < 0) {
+            clog(CLOG_WARNING, "Failed to send request on fd=%d: %s", fd, strerror(errno));
+        } else {
+            clog(CLOG_DEBUG, "Sent %s %s request (%zu bytes) on fd=%d", http_method_to_str(request.method), request.path, header_len, fd);
+        }
+        return;
+    }
+
+    size_t request_len = header_len + request.body_len;
+    char *req = palloc(request_len + 1);
+    if (!req) {
+        clog(CLOG_ERROR, "Failed to allocate memory for request (fd=%d)", fd);
+        return;
+    }
+
+    memcpy(req, header, header_len);
+    memcpy(req + header_len, request.body, request.body_len);
+
+    ssize_t sent = send(fd, req, request_len, 0);
+    if (sent < 0) {
+        clog(CLOG_WARNING, "Failed to send request on fd=%d: %s", fd, strerror(errno));
+    } else {
+        clog(CLOG_DEBUG, "Sent %s %s request (%zu bytes) on fd=%d", http_method_to_str(request.method), request.path, request_len, fd);
     }
 }

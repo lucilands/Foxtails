@@ -15,6 +15,8 @@ void socket_listen(socket_t sock, worker_pool_t worker_pool);
 bool socket_accept(socket_t sock, socket_t *client);
 void dispatch_client(worker_pool_t *pool, struct client *client);
 
+socket_t socket_create_auto(char *url);
+
 socket_t socket_create_unix(char *path);
 
 #endif //__SOCKETS_H
