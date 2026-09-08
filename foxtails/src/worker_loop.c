@@ -138,13 +138,12 @@ static http_t serve_path(http_t *req) {
                 resp.body = NULL;
                 return resp;
             }
-            break;
         case REQUEST_POST:
-            break;
+            return NOT_ALLOWED;
         case REQUEST_PUT:
-            break;
+            return NOT_ALLOWED;
         case REQUEST_DELETE:
-            break;
+             return NOT_ALLOWED;
         case REQUEST_CONNECT:
             return NOT_ALLOWED;
         case REQUEST_OPTIONS:
@@ -152,7 +151,7 @@ static http_t serve_path(http_t *req) {
         case REQUEST_TRACE:
             return NOT_ALLOWED;
         case REQUEST_PATCH:
-            break;
+            return NOT_ALLOWED;
 
         default: clog_assert_m(0, "UNREACHABLE");
     }
@@ -234,6 +233,9 @@ void worker_callback(void *payload, int type) {
                 clog(CLOG_DEBUG, "Client closed connection (fd=%d, slot %d)", client->socket.fd, client->idx);
                 free(buf);
                 server_remove_client(client->serv, *client);
+                pthread_mutex_lock(&client->serv->free_list.lock);
+                client->serv->clients[client->idx].in_flight = false;
+                pthread_mutex_unlock(&client->serv->free_list.lock);
                 break;
             }
 
@@ -243,6 +245,9 @@ void worker_callback(void *payload, int type) {
                 http_send_response(client->socket.fd, req);
                 clog(CLOG_DEBUG, "Bad request on fd=%d (slot %d); closing", client->socket.fd, client->idx);
                 server_remove_client(client->serv, *client);
+                pthread_mutex_lock(&client->serv->free_list.lock);
+                client->serv->clients[client->idx].in_flight = false;
+                pthread_mutex_unlock(&client->serv->free_list.lock);
                 break;
             }
             http_t response = fetch_response(req);
@@ -257,15 +262,24 @@ void worker_callback(void *payload, int type) {
                 if (epoll_ctl(client->serv->epoll_instance, EPOLL_CTL_MOD, client->socket.fd, &event)) {
                     clog(CLOG_WARNING, "Failed to re-arm fd=%d (slot %d): %s. Dropping connection", client->socket.fd, client->idx, strerror(errno));
                     server_remove_client(client->serv, *client);
+                    pthread_mutex_lock(&client->serv->free_list.lock);
+                    client->serv->clients[client->idx].in_flight = false;
+                    pthread_mutex_unlock(&client->serv->free_list.lock);
                     break;
                 }
+                pthread_mutex_lock(&client->serv->free_list.lock);
                 client->serv->clients[client->idx].last_recv = time(NULL);
+                client->serv->clients[client->idx].in_flight = false;
+                pthread_mutex_unlock(&client->serv->free_list.lock);
                 clog(CLOG_DEBUG, "Kept connection alive (fd=%d, slot %d)", client->socket.fd, client->idx);
                 break;
             }
 
             clog(CLOG_DEBUG, "Closing connection (fd=%d, slot %d)", client->socket.fd, client->idx);
             server_remove_client(client->serv, *client);
+            pthread_mutex_lock(&client->serv->free_list.lock);
+            client->serv->clients[client->idx].in_flight = false;
+            pthread_mutex_unlock(&client->serv->free_list.lock);
             break;
         }
         default:

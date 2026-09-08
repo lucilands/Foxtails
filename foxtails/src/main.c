@@ -68,25 +68,35 @@ int main(void) {
 
         time_t oldest_timestamp = time(NULL);
         for (int i = 0; i < max_connections; i++) {
-            if (!server.clients[i].is_alive) continue;
+            pthread_mutex_lock(&server.free_list.lock);
+            client_t snapshot = server.clients[i];
+            pthread_mutex_unlock(&server.free_list.lock);
 
-            time_t idle = time(NULL) - server.clients[i].last_recv;
+            if (!snapshot.is_alive || snapshot.in_flight) continue;
+
+            time_t idle = time(NULL) - snapshot.last_recv;
             if (idle >= keep_alive_timeout) {
                 clog(CLOG_DEBUG, "Client fd=%d (slot %d) idle for %lds (limit %ds); closing",
-                        server.clients[i].socket.fd, i, (long)idle, keep_alive_timeout);
-                server_remove_client(&server, server.clients[i]);
+                        snapshot.socket.fd, i, (long)idle, keep_alive_timeout);
+                server_remove_client(&server, snapshot);
                 continue;
             }
-            oldest_timestamp = server.clients[i].last_recv;
+            oldest_timestamp = snapshot.last_recv;
         }
 
         for (int i = 0; i < num_events; i++) {
             if (events[i].data.ptr) {
                 client_t *client = events[i].data.ptr;
                 clog(CLOG_DEBUG, "Data ready on fd=%d (slot %d). Dispatching to worker", client->socket.fd, client->idx);
+                pthread_mutex_lock(&server.free_list.lock);
+                client->in_flight = true;
+                pthread_mutex_unlock(&server.free_list.lock);
                 dispatch_client(&server.workers, client);
             } else {
-                if (server.free_list.head <= 0) {
+                pthread_mutex_lock(&server.free_list.lock);
+                unsigned int free_head = server.free_list.head;
+                pthread_mutex_unlock(&server.free_list.lock);
+                if (free_head <= 0) {
                     continue;
                 }
                 socket_t client;

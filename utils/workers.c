@@ -26,7 +26,9 @@ void *worker_loop(void *arg) {
     while (1) {
         cpool_save();
         pthread_mutex_lock(&queue->lock);
-        pthread_cond_wait(&queue->not_empty, &queue->lock);
+        while (queue->count == 0 && !queue->shutting_down) {
+            pthread_cond_wait(&queue->not_empty, &queue->lock);
+        }
 
         if (queue->shutting_down) {
             clog(CLOG_TRACE, "Worker shutdown");

@@ -15,6 +15,7 @@ typedef struct client {
     int idx;
     struct server *serv;
     bool is_alive;
+    bool in_flight;
     char ip_addr[INET_ADDRSTRLEN];
 } client_t;
 
