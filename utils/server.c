@@ -174,7 +174,6 @@ void server_delete(server_t server) {
 
     pthread_mutex_destroy(&server.free_list.lock);
     close(server.socket.fd);
-    free(server.socket.address);
     close(server.epoll_instance);
     worker_pool_delete(server.workers);
     clog(CLOG_INFO, "Server shut down");

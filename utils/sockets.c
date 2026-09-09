@@ -5,6 +5,7 @@
 #include <sockets.h>
 #include <workers.h>
 #include <clog.h>
+#include <cpool.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -36,7 +37,7 @@ socket_t socket_create_http(int port) {
 
     socket_t ret = {0};
     ret.fd = fd;
-    ret.address = malloc(sizeof(struct sockaddr_in));
+    ret.address = palloc(sizeof(struct sockaddr_in));
     assert(ret.address);
 
     ((struct sockaddr_in*)ret.address)->sin_family = AF_INET;
@@ -45,7 +46,6 @@ socket_t socket_create_http(int port) {
 
     if (bind(ret.fd, ret.address, sizeof(*(struct sockaddr_in*)ret.address))) {
         clog(CLOG_FATAL, "Failed to bind to port %i: %s", port, strerror(errno));
-        free(ret.address);
         close(ret.fd);
         exit(1);
     }
@@ -105,7 +105,7 @@ socket_t socket_create_unix(char *path) {
 
     socket_t ret = {0};
     ret.fd = fd;
-    ret.address = malloc(sizeof(struct sockaddr_un));
+    ret.address = palloc(sizeof(struct sockaddr_un));
     assert(ret.address);
 
     unlink(path);
@@ -115,7 +115,6 @@ socket_t socket_create_unix(char *path) {
 
     if (bind(ret.fd, ret.address, sizeof(struct sockaddr_un))) {
         clog(CLOG_FATAL, "Failed to bind to path \"%s\": %s", path, strerror(errno));
-        free(ret.address);
         close(ret.fd);
         exit(1);
     }
@@ -126,6 +125,7 @@ socket_t socket_create_unix(char *path) {
     clog(CLOG_TRACE, "Created listening socket fd=%d on path \"%s\"", ret.fd, path);
     return ret;
 }
+
 
 socket_t socket_create_auto(char *url) {
     if (strlen(url) < strlen("http://")) {
@@ -141,7 +141,7 @@ socket_t socket_create_auto(char *url) {
             return (socket_t){0};
         }
 
-        client.address = malloc(sizeof(struct sockaddr_in));
+        client.address = palloc(sizeof(struct sockaddr_in));
         if (!client.address) {
             close(client.fd);
             clog(CLOG_ERROR, "Failed to allocate memory");
@@ -155,7 +155,6 @@ socket_t socket_create_auto(char *url) {
         if (items < 2) {
             clog(CLOG_ERROR, "Malformed URL '%s'", url);
             close(client.fd);
-            free(client.address);
             return (socket_t){0};
         }
 
@@ -166,14 +165,52 @@ socket_t socket_create_auto(char *url) {
         if (inet_pton(AF_INET, ip, &addr->sin_addr) <= 0) {
             clog(CLOG_ERROR, "Invalid IP address");
             close(client.fd);
-            free(client.address);
             return (socket_t){0};
         }
 
         if (connect(client.fd, client.address, sizeof(*addr)) < 0) {
-            clog(CLOG_ERROR, "connect failed");
+            clog(CLOG_ERROR, "connect failed: %s", strerror(errno));
             close(client.fd);
-            free(client.address);
+            return (socket_t){0};
+        }
+
+        struct timeval timeout_tv = { .tv_sec = backend_timeout, .tv_usec = 0 };
+        setsockopt(client.fd, SOL_SOCKET, SO_RCVTIMEO, &timeout_tv, sizeof(timeout_tv));
+        setsockopt(client.fd, SOL_SOCKET, SO_SNDTIMEO, &timeout_tv, sizeof(timeout_tv));
+
+        return client;
+    }
+    else if (strncmp(url, "unix://", strlen("unix://")) == 0) {
+        socket_t client = {0};
+
+        client.fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (!client.fd) {
+            clog(CLOG_ERROR, "Failed to connect to backend service at '%s'", url);
+            return (socket_t) {0};
+        }
+
+        client.address = palloc(sizeof(struct sockaddr_un));
+        if (!client.address) {
+            close(client.fd);
+            clog(CLOG_ERROR, "Failed to allocate memory");
+            return (socket_t) {0};
+        }
+
+        struct sockaddr_un *addr = (struct sockaddr_un*)client.address;
+        memset(addr, 0, sizeof(*addr));
+        addr->sun_family = AF_UNIX;
+
+        const char *sock_path = url + strlen("unix://");
+        if (sock_path[0] == '\0' || strlen(sock_path) >= sizeof(addr->sun_path)) {
+            clog(CLOG_ERROR, "Malformed URL '%s'", url);
+            close(client.fd);
+            return (socket_t){0};
+        }
+        strncpy(addr->sun_path, sock_path, sizeof(addr->sun_path) - 1);
+
+        if (connect(client.fd, client.address, sizeof(*addr)) < 0) {
+            clog(CLOG_ERROR, "connect failed: %s", strerror(errno));
+            close(client.fd);
             return (socket_t){0};
         }
 

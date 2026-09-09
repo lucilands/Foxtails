@@ -183,14 +183,12 @@ static http_t handle_proxy(http_t *req, route_t *route) {
         clog(CLOG_WARNING, "No response from backend '%s'", route->dest);
         free(buf);
         close(backend.fd);
-        free(backend.address);
         return BAD_GATEWAY;
     }
 
     http_t resp = http_response_parse(buf, len);
     free(buf);
     close(backend.fd);
-    free(backend.address);
     if (req->method == REQUEST_HEAD) resp.body = NULL;
     return resp;
 }
