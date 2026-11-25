@@ -211,7 +211,9 @@ http_t fetch_response(http_t req) {
             return route_handlers[route->type](&req, route);
         }
         else if (route->type == ROUTE_TYPE_PROXY) {
-            if (strncmp(req.path, route->src, strlen(route->src)) == 0) {
+            size_t src_len = strlen(route->src);
+            if (strncmp(req.path, route->src, src_len) == 0 &&
+                (req.path[src_len] == '\0' || req.path[src_len] == '/')) {
                 return route_handlers[route->type](&req, route);
             }
         }
@@ -238,7 +240,6 @@ void worker_callback(void *payload, int type) {
             }
 
             http_t req = http_request_parse(buf, len);
-            free(buf);
             if (req.path == NULL) {
                 http_send_response(client->socket.fd, req);
                 clog(CLOG_DEBUG, "Bad request on fd=%d (slot %d); closing", client->socket.fd, client->idx);
@@ -248,6 +249,7 @@ void worker_callback(void *payload, int type) {
                 pthread_mutex_unlock(&client->serv->free_list.lock);
                 break;
             }
+            free(buf);
             http_t response = fetch_response(req);
 
             http_send_response(client->socket.fd, response);
