@@ -114,7 +114,7 @@ socket_t socket_create_unix(char *path) {
     strncpy(((struct sockaddr_un*)ret.address)->sun_path, path, sizeof(((struct sockaddr_un*)ret.address)->sun_path) - 1);
 
     if (bind(ret.fd, ret.address, sizeof(struct sockaddr_un))) {
-        clog(CLOG_FATAL, "Failed to bind to path \"%s\": %s", path, strerror(errno));
+        clog(CLOG_FATAL, "Failed to bind to path %s: %s", path, strerror(errno));
         close(ret.fd);
         exit(1);
     }
@@ -122,7 +122,7 @@ socket_t socket_create_unix(char *path) {
     int flags = fcntl(ret.fd, F_GETFL, 0);
     fcntl(ret.fd, F_SETFL, flags | O_NONBLOCK);
 
-    clog(CLOG_TRACE, "Created listening socket fd=%d on path \"%s\"", ret.fd, path);
+    clog(CLOG_TRACE, "Created listening socket fd=%d on path %s", ret.fd, path);
     return ret;
 }
 
