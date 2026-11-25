@@ -3,6 +3,7 @@
 #include <cpool.h>
 #include <pthread.h>
 #include <sys/socket.h>
+#include <config.h>
 #include <workers.h>
 
 #include <string.h>
@@ -10,6 +11,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+
+extern FILE *server_log_fp;
 
 void *worker_loop(void *arg) {
     worker_thread_args_t *targs = (worker_thread_args_t*)arg;
@@ -19,6 +22,7 @@ void *worker_loop(void *arg) {
     char fmt_buf[128];
     snprintf(fmt_buf, sizeof(fmt_buf), "[Worker %d] %s", worker_id, CLOG_PRETTY_FMT);
     clog_set_fmt(fmt_buf);
+    if (server_log_fp) clog_set_output(server_log_fp);
 
     cpool_t mempool = cpool_init(1024);
 

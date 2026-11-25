@@ -12,6 +12,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "foxctl.h"
+
 #define CLOG_IMPLEMENTATION
 #include <clog.h>
 
@@ -22,6 +24,7 @@
 config_t config;
 route_table_t routes;
 int backend_timeout;
+FILE *server_log_fp = NULL;
 
 static bool running = true;
 
@@ -34,6 +37,19 @@ int main(void) {
 
     config = config_parse("foxtails.conf");
     clog_muted_level = config_get_int(config, "server", "log-level");
+
+    char *log_file_path = config_get(config, "server", "log-file");
+    if (log_file_path) {
+        server_log_fp = fopen(log_file_path, "w");
+        if (!server_log_fp) {
+            clog(CLOG_ERROR, "Failed to open log-file '%s': %s (logging to stdout instead)",
+                 log_file_path, strerror(errno));
+        } else {
+            setvbuf(server_log_fp, NULL, _IOLBF, BUFSIZ);
+            clog_set_output(server_log_fp);
+            clog(CLOG_INFO, "Logging to %s", log_file_path);
+        }
+    }
 
     int num_workers = config_get_int(config, "server", "num-workers");
     if (!num_workers) num_workers = 8;
@@ -57,36 +73,57 @@ int main(void) {
     if (!unix_path) server = server_init_http(max_connections, num_workers, port ? port : 8080);
     else server = server_init_unix(max_connections, num_workers, unix_path);
 
+    char *foxctl_path = config_get(config, "server", "foxctl_path");
+    if (!foxctl_path) {
+        clog(CLOG_WARNING, "foxctl_path not set, foxctl will not be available");
+    }
+    else {
+        foxctl_start(foxctl_path);
+    }
+
     socket_listen(server.socket, server.workers);
     clog(CLOG_INFO, "Foxtails listening on *:%i", port);
 
     struct epoll_event events[32] = {0};
     const int maxevents = 32;
 
+    time_t last_idle_scan = 0;
+    time_t oldest_timestamp = time(NULL);
+
+
     while (running) {
-        int num_events = epoll_wait(server.epoll_instance, events, maxevents, 1);
+        int num_events = epoll_wait(server.epoll_instance, events, maxevents, 1000);
+        int foxctl_cmd = foxctl_fetch_cmd(10);
+        switch (foxctl_cmd) {
+            case FOXCTL_NONE: break;
+            case FOXCTL_STOP: running = false; break;
+            default: break;
+        }
+
         if (num_events < 0) {
             if (errno == EINTR) continue;
             clog(CLOG_ERROR, "epoll_wait failed: %s", strerror(errno));
             continue;
         }
 
-        time_t oldest_timestamp = time(NULL);
-        for (int i = 0; i < max_connections; i++) {
-            pthread_mutex_lock(&server.free_list.lock);
-            client_t snapshot = server.clients[i];
-            pthread_mutex_unlock(&server.free_list.lock);
+        if (time(NULL) != last_idle_scan) {
+            last_idle_scan = time(NULL);
+            for (int i = 0; i < max_connections; i++) {
+                pthread_mutex_lock(&server.free_list.lock);
+                client_t snapshot = server.clients[i];
+                pthread_mutex_unlock(&server.free_list.lock);
 
-            if (!snapshot.is_alive || snapshot.in_flight) continue;
+                if (!snapshot.is_alive || snapshot.in_flight) continue;
 
-            time_t idle = time(NULL) - snapshot.last_recv;
-            if (idle >= keep_alive_timeout) {
-                clog(CLOG_DEBUG, "Client fd=%d (slot %d) idle for %lds (limit %ds); closing",
-                        snapshot.socket.fd, i, (long)idle, keep_alive_timeout);
-                server_remove_client(&server, snapshot);
-                continue;
+                time_t idle = time(NULL) - snapshot.last_recv;
+                if (idle >= keep_alive_timeout) {
+                    clog(CLOG_DEBUG, "Client fd=%d (slot %d) idle for %lds (limit %ds); closing",
+                            snapshot.socket.fd, i, (long)idle, keep_alive_timeout);
+                    server_remove_client(&server, snapshot);
+                    continue;
+                }
+                oldest_timestamp = time(NULL);
             }
-            oldest_timestamp = snapshot.last_recv;
         }
 
         for (int i = 0; i < num_events; i++) {
@@ -112,9 +149,11 @@ int main(void) {
         }
     }
 
+    foxctl_stop();
     server_delete(server);
     routes_delete(routes);
     config_delete(config);
     cpool_uninit(mempool);
+    if (server_log_fp) fclose(server_log_fp);
     return 0;
 }

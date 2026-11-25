@@ -3,6 +3,8 @@
 
 #include <stddef.h>
 
+#define CLOG_PRETTY_FMT "%c[%L]%r %t %f:%l   %m"
+
 // TODO: Store section offsets in hash-map for faster lookups
 typedef struct {
     struct {

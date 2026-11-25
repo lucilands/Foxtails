@@ -5,7 +5,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define CLOG_PRETTY_FMT "%c[%L]%r %t %f:%l   %m"
 
 #define WORKER_ACTION_PAYLOAD_SIZE 128
 
