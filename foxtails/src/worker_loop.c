@@ -24,6 +24,8 @@
 
 extern config_t config;
 extern route_table_t routes;
+extern int backend_timeout;
+extern int request_timeout;
 
 
 
@@ -178,9 +180,10 @@ static http_t handle_proxy(http_t *req, route_t *route) {
 
     http_send_request(backend.fd, *req);
     size_t len;
-    char *buf = http_recv_message(backend.fd, &len, req->method != REQUEST_HEAD);
+    http_recv_status_t status;
+    char *buf = http_recv_message(backend.fd, &len, req->method != REQUEST_HEAD, backend_timeout, &status);
     if (len == 0) {
-        clog(CLOG_WARNING, "No response from backend '%s'", route->dest);
+        clog(CLOG_WARNING, "No response from backend '%s' (status %d)", route->dest, status);
         free(buf);
         close(backend.fd);
         return BAD_GATEWAY;
@@ -228,9 +231,18 @@ void worker_callback(void *payload, int type) {
         case WORKER_ACTION_NEW_CLIENT: {
             client_t *client = payload;
             size_t len;
-            char *buf = http_recv_message(client->socket.fd, &len, true);
-            if (len == 0) {
-                clog(CLOG_DEBUG, "Client closed connection (fd=%d, slot %d)", client->socket.fd, client->idx);
+            http_recv_status_t status;
+            char *buf = http_recv_message(client->socket.fd, &len, true, request_timeout, &status);
+            if (status != HTTP_RECV_OK) {
+                if (status == HTTP_RECV_TOO_LARGE) {
+                    clog(CLOG_DEBUG, "Request head too large on fd=%d (slot %d); closing", client->socket.fd, client->idx);
+                    http_send_response(client->socket.fd, HEADERS_TOO_LARGE);
+                } else if (status == HTTP_RECV_TIMEOUT && len > 0) {
+                    clog(CLOG_DEBUG, "Incomplete request timed out on fd=%d (slot %d); closing", client->socket.fd, client->idx);
+                    http_send_response(client->socket.fd, REQUEST_TIMEOUT);
+                } else {
+                    clog(CLOG_DEBUG, "Client closed connection (fd=%d, slot %d, status %d, %zu bytes)", client->socket.fd, client->idx, status, len);
+                }
                 free(buf);
                 server_remove_client(client->serv, *client);
                 pthread_mutex_lock(&client->serv->free_list.lock);

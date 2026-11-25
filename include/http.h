@@ -51,6 +51,18 @@ enum {
 #define HTTP_MAX_HEADERS 32
 #endif //HTTP_MAX_HEADERS
 
+#ifndef HTTP_MAX_HEAD_SIZE
+#define HTTP_MAX_HEAD_SIZE 8192
+#endif //HTTP_MAX_HEAD_SIZE
+
+typedef enum {
+    HTTP_RECV_OK,        // full head (+ body) received
+    HTTP_RECV_EOF,       // peer closed before the message was complete
+    HTTP_RECV_TIMEOUT,   // deadline hit before the message was complete
+    HTTP_RECV_TOO_LARGE, // head exceeded HTTP_MAX_HEAD_SIZE without a blank line
+    HTTP_RECV_ERROR,
+} http_recv_status_t;
+
 #define NOT_IMPLEMENTED     (http_t) { .code = 501, .reason = "Not Implemented", .body = "Not Implemented", .body_len = sizeof("Not Implemented") - 1, \
                                         .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 } }
 #define NOT_FOUND           (http_t) { .code = 404, .reason = "Not Found", .body = "Not Found", .body_len = sizeof("Not Found") - 1, \
@@ -68,6 +80,8 @@ enum {
 #define VERSION_NOT_SUPPORTED (http_t) { .code = 505, .reason = "HTTP Version Not Supported", .body = "HTTP Version Not Supported", .body_len = sizeof("HTTP Version Not Supported") - 1, \
                                         .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 } }
 #define REQUEST_TIMEOUT       (http_t) { .code = 408, .reason = "Request Timeout", .body = "Request Timeout", .body_len = sizeof("Request Timeout") - 1, \
+                                        .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 } }
+#define HEADERS_TOO_LARGE     (http_t) { .code = 431, .reason = "Request Header Fields Too Large", .body = "Request Header Fields Too Large", .body_len = sizeof("Request Header Fields Too Large") - 1, \
                                         .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 } }
 #define BAD_GATEWAY           (http_t) { .code = 502, .reason = "Bad Gateway", .body = "Bad Gateway", .body_len = sizeof("Bad Gateway") - 1, \
                                         .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 } }
@@ -99,7 +113,7 @@ typedef struct {
 
 http_t http_request_parse(char *buffer, size_t len);
 http_t http_response_parse(char *buffer, size_t len);
-char *http_recv_message(int fd, size_t *out_len, bool expect_body);
+char *http_recv_message(int fd, size_t *out_len, bool expect_body, int timeout_s, http_recv_status_t *status);
 void http_send_response(int fd, http_t response);
 void http_send_request(int fd, http_t request);
 

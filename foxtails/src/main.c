@@ -24,6 +24,7 @@
 config_t config;
 route_table_t routes;
 int backend_timeout;
+int request_timeout;
 FILE *server_log_fp = NULL;
 
 static bool running = true;
@@ -64,6 +65,10 @@ int main(void) {
     backend_timeout = config_get_int(config, "backends", "timeout");
     if (!backend_timeout) backend_timeout = 5;
     clog(CLOG_TRACE, "Backend timeout: %ds", backend_timeout);
+
+    request_timeout = config_get_int(config, "server", "request-timeout");
+    if (!request_timeout) request_timeout = 10;
+    clog(CLOG_TRACE, "Request timeout: %ds", request_timeout);
 
     routes = routes_parse("routes.conf");
 

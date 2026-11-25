@@ -13,8 +13,6 @@
 #include <strings.h>
 #include <sys/socket.h>
 
-extern int backend_timeout;
-
 
 int http_method_from_str(const char *str, size_t len) {
     switch (len) {
@@ -374,39 +372,61 @@ void http_send_response(int fd, http_t response) {
     }
 }
 
-char *http_recv_message(int fd, size_t *out_len, bool expect_body) {
+static int ms_since(const struct timespec *start) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (int)((now.tv_sec - start->tv_sec) * 1000 + (now.tv_nsec - start->tv_nsec) / 1000000);
+}
+
+static char *find_head_end(char *buf, size_t len) {
+    char *crlf = memmem(buf, len, "\r\n\r\n", 4);
+    char *lf = memmem(buf, len, "\n\n", 2);
+    if (crlf && (!lf || crlf <= lf)) return crlf + 4;
+    return lf ? lf + 2 : NULL;
+}
+
+char *http_recv_message(int fd, size_t *out_len, bool expect_body, int timeout_s, http_recv_status_t *status) {
     size_t cap = 4096, len = 0, content_length = 0;
     char *buf = malloc(cap);
     char *body_start = NULL;
-    ssize_t n = 0;
-
-    int flags = fcntl(fd, F_GETFL, 0);
-    bool nonblocking = flags >= 0 && (flags & O_NONBLOCK);
+    struct timespec start;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    *status = HTTP_RECV_ERROR;
 
     while (1) {
-        n = recv(fd, buf + len, cap - len, 0);
-        if (n == -1 && nonblocking && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        ssize_t n = recv(fd, buf + len, cap - len, 0);
+        if (n == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            int remaining_ms = timeout_s * 1000 - ms_since(&start);
             struct pollfd pfd = { .fd = fd, .events = POLLIN };
-            if (poll(&pfd, 1, backend_timeout * 1000) > 0) continue;
+            if (remaining_ms > 0 && poll(&pfd, 1, remaining_ms) > 0) continue;
+            *status = HTTP_RECV_TIMEOUT;
             break;
         }
-        if (n <= 0) break;
+        if (n == 0) { *status = HTTP_RECV_EOF; break; }
+        if (n < 0)  { *status = HTTP_RECV_ERROR; break; }
 
         len += n;
-        if (!body_start && (body_start = memmem(buf, len, "\r\n\r\n", 4))) {
-            body_start += 4;
+        if (!body_start && (body_start = find_head_end(buf, len))) {
             if (expect_body) {
                 char *cl = memmem(buf, body_start - buf, "Content-Length:", 15);
                 if (cl) content_length = strtoul(cl + 15, NULL, 10);
             }
         }
-        if (body_start && (size_t)(buf + len - body_start) >= content_length) break;
+        if (body_start && (size_t)(buf + len - body_start) >= content_length) {
+            *status = HTTP_RECV_OK;
+            break;
+        }
+        if (!body_start && len > HTTP_MAX_HEAD_SIZE) {
+            *status = HTTP_RECV_TOO_LARGE;
+            break;
+        }
         if (cap - len < 1024) {
             size_t body_offset = body_start ? (size_t)(body_start - buf) : 0;
             size_t new_cap = cap * 2;
             char *new_buf = realloc(buf, new_cap);
             if (!new_buf) {
                 clog(CLOG_ERROR, "Out of memory growing recv buffer (fd=%d, wanted %zu bytes)", fd, new_cap);
+                *status = HTTP_RECV_ERROR;
                 break;
             }
             buf = new_buf;
