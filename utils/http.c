@@ -3,12 +3,17 @@
 #include <clog.h>
 #include <cpool.h>
 
+#include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
 #include <sys/socket.h>
+
+extern int backend_timeout;
 
 
 int http_method_from_str(const char *str, size_t len) {
@@ -139,14 +144,17 @@ static char *http_first_line(char *buffer, size_t len, size_t *out_line_len) {
 
     size_t line_len = line_end - buffer;
     if (line_len > 0 && buffer[line_len - 1] == '\r') {
-        line_len--;  /* strip trailing \r */
+        line_len--;
+    }
+    else {
+        return NULL;
     }
 
     *out_line_len = line_len;
     return line_end;
 }
 
-static void http_parse_headers_and_body(http_t *msg, char *buffer, size_t len, char *headers_start) {
+static bool http_parse_headers_and_body(http_t *msg, char *buffer, size_t len, char *headers_start) {
     size_t headers_remaining = len - (headers_start - buffer);
 
     char *body_start = NULL;
@@ -174,6 +182,13 @@ static void http_parse_headers_and_body(http_t *msg, char *buffer, size_t len, c
         char *value = colon + 1;
         while (*value == ' ') value++;
 
+        http_foreach_header(msg, field) {
+            if (strcmp(field->name, line) == 0) {
+                if (strcmp(line, "Host") == 0 ||
+                    strcmp(line, "Content-Length") == 0) return false;
+            }
+        }
+
         http_set_header(msg, line, value);
     }
 
@@ -189,10 +204,10 @@ static void http_parse_headers_and_body(http_t *msg, char *buffer, size_t len, c
         }
 
         if (available < content_length) {
-            clog(CLOG_WARNING, "Truncated body: got %zu of %zu bytes (Content-Length)",
-                 available, content_length);
+            clog(CLOG_WARNING, "Truncated body: got %zu of %zu bytes (Content-Length)", available, content_length);
         }
     }
+    return true;
 }
 
 http_t http_request_parse(char *buf, size_t len) {
@@ -202,7 +217,7 @@ http_t http_request_parse(char *buf, size_t len) {
     char *line_end = http_first_line(buffer, len, &line_len);
     if (!line_end) {
         clog(CLOG_WARNING, "Partial request. Ignoring");
-        return REQUEST_TIMEOUT;
+        return BAD_REQUEST;
     }
 
     http_t request = {0};
@@ -233,6 +248,11 @@ http_t http_request_parse(char *buf, size_t len) {
     char *version_start = path_end + 1;
     size_t version_len = line_len - (version_start - buffer);
 
+    if (version_start[0] != 'H') {
+        clog(CLOG_ERROR, "Invalid HTTP version string '%.*s'", (int)version_len, version_start);
+        return BAD_REQUEST;
+    }
+
     if (version_len != 8 || memcmp(version_start, "HTTP/1.1", 8) != 0) {
         clog(CLOG_ERROR, "Unsupported HTTP version %.*s", (int)version_len, version_start);
         return VERSION_NOT_SUPPORTED;
@@ -240,7 +260,15 @@ http_t http_request_parse(char *buf, size_t len) {
     request.version = HTTP_VERSION_1_1;
     request.path = pstrndup(path_start, path_len);
 
-    http_parse_headers_and_body(&request, buffer, len, line_end + 1);
+    if (!http_parse_headers_and_body(&request, buffer, len, line_end + 1)) {
+        clog(CLOG_ERROR, "Request failed to parse body");
+        return BAD_REQUEST;
+    }
+
+    if (!http_has_header(&request, "Host")) {
+        clog(CLOG_ERROR, "Request is missing 'Host' header");
+        return BAD_REQUEST;
+    }
 
     return request;
 }
@@ -350,9 +378,20 @@ char *http_recv_message(int fd, size_t *out_len, bool expect_body) {
     size_t cap = 4096, len = 0, content_length = 0;
     char *buf = malloc(cap);
     char *body_start = NULL;
-    ssize_t n;
+    ssize_t n = 0;
 
-    while ((n = recv(fd, buf + len, cap - len, 0)) > 0) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    bool nonblocking = flags >= 0 && (flags & O_NONBLOCK);
+
+    while (1) {
+        n = recv(fd, buf + len, cap - len, 0);
+        if (n == -1 && nonblocking && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            struct pollfd pfd = { .fd = fd, .events = POLLIN };
+            if (poll(&pfd, 1, backend_timeout * 1000) > 0) continue;
+            break;
+        }
+        if (n <= 0) break;
+
         len += n;
         if (!body_start && (body_start = memmem(buf, len, "\r\n\r\n", 4))) {
             body_start += 4;
@@ -362,7 +401,18 @@ char *http_recv_message(int fd, size_t *out_len, bool expect_body) {
             }
         }
         if (body_start && (size_t)(buf + len - body_start) >= content_length) break;
-        if (cap - len < 1024) buf = realloc(buf, cap *= 2);
+        if (cap - len < 1024) {
+            size_t body_offset = body_start ? (size_t)(body_start - buf) : 0;
+            size_t new_cap = cap * 2;
+            char *new_buf = realloc(buf, new_cap);
+            if (!new_buf) {
+                clog(CLOG_ERROR, "Out of memory growing recv buffer (fd=%d, wanted %zu bytes)", fd, new_cap);
+                break;
+            }
+            buf = new_buf;
+            cap = new_cap;
+            if (body_start) body_start = buf + body_offset;
+        }
     }
     *out_len = len;
     return buf;
