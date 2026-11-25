@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+
+{BINDIR}/foxtails & ft=$!
+
+trap 'exit 0' INT TERM
+trap 'kill -INT $ft; wait $ft' EXIT
+
+{BINDIR}/foxfang

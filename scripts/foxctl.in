@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+
+
+foxctl_path=$(sed -n 's/^[[:space:]]*foxctl_path[[:space:]]*=[[:space:]]*//p' foxtails.conf | tail -n 1)
+
+mode=$1
+
+case "$mode" in
+    stop)
+        echo -n "STOP" | nc -U $foxctl_path
+        ;;
+
+    *)
+        echo "Invalid mode \"$mode\""
+        exit 1
+esac
