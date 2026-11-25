@@ -111,7 +111,9 @@ void server_append_client(server_t *server, socket_t client, time_t oldest_clien
             .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 },
         };
         http_set_header(&resp, "Retry-After", retry_buf);
-        http_send_response(client.fd, resp);
+        // Sent from the accept loop while holding the free-list lock: never
+        // wait for a slow client here, just send what fits and move on.
+        http_send_response(client.fd, resp, 0);
 
         close(client.fd);
         free(client.address);

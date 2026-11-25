@@ -1,3 +1,4 @@
+#include <bits/time.h>
 #include <http.h>
 
 #include <clog.h>
@@ -322,7 +323,50 @@ http_t http_response_parse(char *buf, size_t len) {
 }
 
 
-void http_send_response(int fd, http_t response) {
+static int ms_since(const struct timespec *start) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (int)((now.tv_sec - start->tv_sec) * 1000 + (now.tv_nsec - start->tv_nsec) / 1000000);
+}
+
+static ssize_t http_send_all(int fd, const char *buf, size_t len, time_t timeout) {
+    struct timespec start;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
+    ssize_t sent = send(fd, buf, len, MSG_NOSIGNAL);
+    if (sent < 0 && errno != EAGAIN) return -1;
+    if (sent < 0) sent = 0;
+
+    size_t sent_total = sent;
+    while (sent_total < len) {
+        sent = send(fd, buf + sent_total, len - sent_total, MSG_NOSIGNAL);
+        if (sent < 0) {
+            if (errno == EAGAIN) {
+                struct pollfd fds = {
+                    .fd = fd,
+                    .events = POLLOUT,
+                    .revents = 0
+                };
+                int remaining = timeout * 1000 - ms_since(&start);
+                if (remaining <= 0) return -1;
+                int pret = poll(&fds, 1, remaining);
+                if (pret == 0) {
+                    errno = ETIMEDOUT;
+                    return -1;
+                }
+                if (pret < 0 && errno != EINTR) {
+                    return -1;
+                }
+                continue;
+            }
+            return -1;
+        }
+        sent_total += sent;
+    }
+    return sent_total;
+}
+
+void http_send_response(int fd, http_t response, int timeout_s) {
     char header[4096];
     time_t now = time(NULL);
     struct tm *tm_info = gmtime(&now);
@@ -345,7 +389,7 @@ void http_send_response(int fd, http_t response) {
     header_len += snprintf(header + header_len, sizeof(header) - header_len, "\r\n");
 
     if (!response.body) {
-        ssize_t sent = send(fd, header, header_len, 0);
+        ssize_t sent = http_send_all(fd, header, header_len, timeout_s);
         if (sent < 0) {
             clog(CLOG_WARNING, "Failed to send response on fd=%d: %s", fd, strerror(errno));
         } else {
@@ -364,18 +408,12 @@ void http_send_response(int fd, http_t response) {
     memcpy(resp, header, header_len);
     memcpy(resp + header_len, response.body, response.body_len);
 
-    ssize_t sent = send(fd, resp, response_len, 0);
+    ssize_t sent = http_send_all(fd, resp, response_len, timeout_s);
     if (sent < 0) {
         clog(CLOG_WARNING, "Failed to send response on fd=%d: %s", fd, strerror(errno));
     } else {
         clog(CLOG_DEBUG, "Sent %i response (%zu bytes) on fd=%d", response.code, response_len, fd);
     }
-}
-
-static int ms_since(const struct timespec *start) {
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    return (int)((now.tv_sec - start->tv_sec) * 1000 + (now.tv_nsec - start->tv_nsec) / 1000000);
 }
 
 static char *find_head_end(char *buf, size_t len) {
@@ -438,7 +476,7 @@ char *http_recv_message(int fd, size_t *out_len, bool expect_body, int timeout_s
     return buf;
 }
 
-void http_send_request(int fd, http_t request) {
+void http_send_request(int fd, http_t request, int timeout_s) {
     char header[4096];
 
     size_t header_len = snprintf(header, sizeof(header),
@@ -454,7 +492,7 @@ void http_send_request(int fd, http_t request) {
     header_len += snprintf(header + header_len, sizeof(header) - header_len, "\r\n");
 
     if (!request.body) {
-        ssize_t sent = send(fd, header, header_len, 0);
+        ssize_t sent = http_send_all(fd, header, header_len, timeout_s);
         if (sent < 0) {
             clog(CLOG_WARNING, "Failed to send request on fd=%d: %s", fd, strerror(errno));
         } else {
@@ -473,7 +511,7 @@ void http_send_request(int fd, http_t request) {
     memcpy(req, header, header_len);
     memcpy(req + header_len, request.body, request.body_len);
 
-    ssize_t sent = send(fd, req, request_len, 0);
+    ssize_t sent = http_send_all(fd, req, request_len, timeout_s);
     if (sent < 0) {
         clog(CLOG_WARNING, "Failed to send request on fd=%d: %s", fd, strerror(errno));
     } else {

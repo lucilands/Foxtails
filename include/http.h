@@ -114,8 +114,8 @@ typedef struct {
 http_t http_request_parse(char *buffer, size_t len);
 http_t http_response_parse(char *buffer, size_t len);
 char *http_recv_message(int fd, size_t *out_len, bool expect_body, int timeout_s, http_recv_status_t *status);
-void http_send_response(int fd, http_t response);
-void http_send_request(int fd, http_t request);
+void http_send_response(int fd, http_t response, int timeout_s);
+void http_send_request(int fd, http_t request, int timeout_s);
 
 bool http_set_header(http_t *msg, const char *name, const char *value);
 char *http_get_header(const http_t *msg, const char *name);

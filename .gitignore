@@ -11,9 +11,17 @@ core
 core.*
 vgcore.*
 
+# Examples
+examples/
+
+# Tests
+tests/
+http11probe.json
+
 # Tooling
 .cache/
 compile_commands.json
+*.bak
 
 # Editor
 *.swp

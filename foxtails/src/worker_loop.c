@@ -178,7 +178,7 @@ static http_t handle_proxy(http_t *req, route_t *route) {
     socket_t backend = socket_create_auto(route->dest);
     if (backend.address == NULL) return NOT_FOUND;
 
-    http_send_request(backend.fd, *req);
+    http_send_request(backend.fd, *req, backend_timeout);
     size_t len;
     http_recv_status_t status;
     char *buf = http_recv_message(backend.fd, &len, req->method != REQUEST_HEAD, backend_timeout, &status);
@@ -236,10 +236,10 @@ void worker_callback(void *payload, int type) {
             if (status != HTTP_RECV_OK) {
                 if (status == HTTP_RECV_TOO_LARGE) {
                     clog(CLOG_DEBUG, "Request head too large on fd=%d (slot %d); closing", client->socket.fd, client->idx);
-                    http_send_response(client->socket.fd, HEADERS_TOO_LARGE);
+                    http_send_response(client->socket.fd, HEADERS_TOO_LARGE, request_timeout);
                 } else if (status == HTTP_RECV_TIMEOUT && len > 0) {
                     clog(CLOG_DEBUG, "Incomplete request timed out on fd=%d (slot %d); closing", client->socket.fd, client->idx);
-                    http_send_response(client->socket.fd, REQUEST_TIMEOUT);
+                    http_send_response(client->socket.fd, REQUEST_TIMEOUT, request_timeout);
                 } else {
                     clog(CLOG_DEBUG, "Client closed connection (fd=%d, slot %d, status %d, %zu bytes)", client->socket.fd, client->idx, status, len);
                 }
@@ -253,7 +253,7 @@ void worker_callback(void *payload, int type) {
 
             http_t req = http_request_parse(buf, len);
             if (req.path == NULL) {
-                http_send_response(client->socket.fd, req);
+                http_send_response(client->socket.fd, req, request_timeout);
                 clog(CLOG_DEBUG, "Bad request on fd=%d (slot %d); closing", client->socket.fd, client->idx);
                 server_remove_client(client->serv, *client);
                 pthread_mutex_lock(&client->serv->free_list.lock);
@@ -264,7 +264,7 @@ void worker_callback(void *payload, int type) {
             free(buf);
             http_t response = fetch_response(req);
 
-            http_send_response(client->socket.fd, response);
+            http_send_response(client->socket.fd, response, request_timeout);
 
             if (http_is_keep_alive(&req)) {
                 struct epoll_event event = {
