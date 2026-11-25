@@ -48,7 +48,7 @@ enum {
 };
 
 #ifndef HTTP_MAX_HEADERS
-#define HTTP_MAX_HEADERS 32
+#define HTTP_MAX_HEADERS 128
 #endif //HTTP_MAX_HEADERS
 
 #ifndef HTTP_MAX_HEAD_SIZE

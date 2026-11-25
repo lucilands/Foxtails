@@ -376,10 +376,19 @@ void http_send_response(int fd, http_t response, int timeout_s) {
     if (!http_has_header(&response, "Content-Type")) {
         http_set_content_type(&response, MIME_TEXT_PLAIN);
     }
+    if (!http_has_header(&response, "Date")) {
+        http_set_header(&response, "Date", date);
+    }
+    if (!http_has_header(&response, "Content-Length")) {
+        char strblen[128];
+        snprintf(strblen, 128, "%zu", response.body_len);
+        http_set_header(&response, "Content-Length",strblen);
+    }
+
 
     size_t header_len = snprintf(header, sizeof(header),
-        "HTTP/1.1 %i %s\r\nDate: %s\r\nServer: Foxtails\r\nContent-Length: %zu\r\n",
-        response.code, response.reason, date, response.body_len);
+        "HTTP/1.1 %i %s\r\nServer: Foxtails\r\n",
+        response.code, response.reason);
 
     http_foreach_header(&response, h) {
         header_len += snprintf(header + header_len, sizeof(header) - header_len,
