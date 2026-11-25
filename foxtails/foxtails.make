@@ -1,11 +1,12 @@
-OBJ:=\
+FT_OBJ:=\
 	 $(FOXTAIL_SRC)/main.o\
-     $(FOXTAIL_SRC)/worker_loop.o
+     $(FOXTAIL_SRC)/worker_loop.o\
+     $(FOXTAIL_SRC)/foxctl.o
 
-foxtails: $(OBJ) $(BINDIR) $(UTILS_OBJ)
-	$(CC) -o$(BINDIR)/foxtails $(OBJ) $(UTILS_OBJ) $(LDFLAGS)
+foxtails: $(FT_OBJ) $(BINDIR) $(UTILS_OBJ)
+	$(CC) -o $(BINDIR)/foxtails $(FT_OBJ) $(UTILS_OBJ) $(LDFLAGS)
 
-$(OBJ):%.o: %.c
+$(FT_OBJ):%.o: %.c
 	$(CC) -o $@ $(CFLAGS) -c $<
 
--include $(OBJ:.o=.d)
+-include $(FT_OBJ:.o=.d)
