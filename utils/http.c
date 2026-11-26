@@ -366,8 +366,40 @@ static ssize_t http_send_all(int fd, const char *buf, size_t len, time_t timeout
     return sent_total;
 }
 
+size_t http_construct_request_header(char *header, size_t header_size, http_t request) {
+    size_t header_len = snprintf(header, header_size,
+        "%s %s HTTP/1.1\r\nContent-Length: %zu\r\n",
+        http_method_to_str(request.method), request.path, request.body_len);
+
+
+    http_foreach_header(&request, h) {
+        if (strcasecmp(h->name, "Content-Length") == 0) continue;
+        header_len += snprintf(header ? header + header_len : NULL, header ? header_size - header_len : 0,
+            "%s: %s\r\n", h->name, h->value);
+    }
+
+    header_len += snprintf(header ? header + header_len : NULL, header ? header_size - header_len : 0, "\r\n");
+
+    return header_len;
+}
+
+size_t http_construct_response_header(char *header, size_t header_size, http_t response) {
+    size_t header_len = snprintf(header, header_size,
+        "HTTP/1.1 %i %s\r\nServer: Foxtails\r\n",
+        response.code, response.reason);
+
+
+    http_foreach_header(&response, h) {
+        header_len += snprintf(header ? header + header_len : NULL, header ? header_size - header_len : 0,
+            "%s: %s\r\n", h->name, h->value);
+    }
+
+    header_len += snprintf(header ? header + header_len : NULL, header ? header_size - header_len : 0, "\r\n");
+
+    return header_len;
+}
+
 void http_send_response(int fd, http_t response, int timeout_s) {
-    char header[4096];
     time_t now = time(NULL);
     struct tm *tm_info = gmtime(&now);
     char date[32];
@@ -386,16 +418,14 @@ void http_send_response(int fd, http_t response, int timeout_s) {
     }
 
 
-    size_t header_len = snprintf(header, sizeof(header),
-        "HTTP/1.1 %i %s\r\nServer: Foxtails\r\n",
-        response.code, response.reason);
-
-    http_foreach_header(&response, h) {
-        header_len += snprintf(header + header_len, sizeof(header) - header_len,
-            "%s: %s\r\n", h->name, h->value);
+    size_t header_size = http_construct_response_header(NULL, 0, response);
+    char *header = palloc(header_size+1);
+    if (!header) {
+        clog(CLOG_ERROR, "Failed to allocate memory for response (fd=%d)", fd);
+        return;
     }
 
-    header_len += snprintf(header + header_len, sizeof(header) - header_len, "\r\n");
+    size_t header_len = http_construct_response_header(header, header_size+1, response);
 
     if (!response.body) {
         ssize_t sent = http_send_all(fd, header, header_len, timeout_s);
@@ -486,19 +516,14 @@ char *http_recv_message(int fd, size_t *out_len, bool expect_body, int timeout_s
 }
 
 void http_send_request(int fd, http_t request, int timeout_s) {
-    char header[4096];
-
-    size_t header_len = snprintf(header, sizeof(header),
-        "%s %s HTTP/1.1\r\nContent-Length: %zu\r\n",
-        http_method_to_str(request.method), request.path, request.body_len);
-
-    http_foreach_header(&request, h) {
-        if (strcasecmp(h->name, "Content-Length") == 0) continue;
-        header_len += snprintf(header + header_len, sizeof(header) - header_len,
-            "%s: %s\r\n", h->name, h->value);
+    size_t header_size = http_construct_request_header(NULL, 0, request);
+    char *header = palloc(header_size+1);
+    if (!header) {
+        clog(CLOG_ERROR, "Failed to allocate memory for request (fd=%d)", fd);
+        return;
     }
 
-    header_len += snprintf(header + header_len, sizeof(header) - header_len, "\r\n");
+    size_t header_len = http_construct_request_header(header, header_size+1, request);
 
     if (!request.body) {
         ssize_t sent = http_send_all(fd, header, header_len, timeout_s);
@@ -515,6 +540,7 @@ void http_send_request(int fd, http_t request, int timeout_s) {
     if (!req) {
         clog(CLOG_ERROR, "Failed to allocate memory for request (fd=%d)", fd);
         return;
+        
     }
 
     memcpy(req, header, header_len);
