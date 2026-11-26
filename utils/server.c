@@ -168,6 +168,8 @@ void server_remove_client(server_t *server, client_t client) {
 void server_delete(server_t server) {
     clog(CLOG_INFO, "Shutting down server");
 
+    worker_pool_delete(server.workers);
+
     for (unsigned int i = 0; i < server.free_list.capacity; i++) {
         if (!server.clients[i].is_alive) continue;
         close(server.clients[i].socket.fd);
@@ -177,6 +179,5 @@ void server_delete(server_t server) {
     pthread_mutex_destroy(&server.free_list.lock);
     close(server.socket.fd);
     close(server.epoll_instance);
-    worker_pool_delete(server.workers);
     clog(CLOG_INFO, "Server shut down");
 }
