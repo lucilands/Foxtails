@@ -188,8 +188,8 @@ const clog_level_t CLOG_FATAL   = CLOG_REGISTER_LEVEL("FATAL",   CLOG_COLOR_BOLD
 
 int clog_muted_level = -1;
 
-int __clog_errno = 0;
-char __clog_timebuf[50];
+CLOG_THREAD_LOCAL int __clog_errno = 0;
+CLOG_THREAD_LOCAL char __clog_timebuf[50];
 
 int(*clog_callback)(const char *line) = clog_default_callback;
 
@@ -225,7 +225,7 @@ size_t __clog_sprintf(char *target, size_t cur_len, size_t max_len, const char *
     va_start(args, fmt);
 
     if (cur_len + len >= max_len) {
-        size_t ret = vsnprintf(target, max_len - len - 5, fmt, args);
+        size_t ret = vsnprintf(target, max_len - cur_len - 5, fmt, args);
         strncat(target, "...", 4);
         ret += 4;
         va_end(args);
@@ -329,14 +329,15 @@ char *clog_get_timestamp() {
         millisecond = t.wMilliseconds;
     #elif defined(__unix__)
         time_t t = time(NULL);
-        struct tm *time = localtime(&t);
+        struct tm time = {0};
+        localtime_r(&t, &time);
 
         struct timeval time_val;
         gettimeofday(&time_val, NULL);
 
-        hour = time->tm_hour;
-        minute = time->tm_min;
-        second = time->tm_sec;
+        hour = time.tm_hour;
+        minute = time.tm_min;
+        second = time.tm_sec;
         millisecond = (time_val.tv_sec * 1000 + time_val.tv_usec / 1000) % 1000;
     #endif
 
