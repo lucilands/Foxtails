@@ -237,11 +237,14 @@ void worker_callback(void *payload, int type) {
                 if (status == HTTP_RECV_TOO_LARGE) {
                     clog(CLOG_DEBUG, "Request head too large on fd=%d (slot %d); closing", client->socket.fd, client->idx);
                     http_send_response(client->socket.fd, HEADERS_TOO_LARGE, request_timeout);
+                    if (buf != NULL) free(buf);
                 } else if (status == HTTP_RECV_TIMEOUT && len > 0) {
                     clog(CLOG_DEBUG, "Incomplete request timed out on fd=%d (slot %d); closing", client->socket.fd, client->idx);
                     http_send_response(client->socket.fd, REQUEST_TIMEOUT, request_timeout);
+                    if (buf != NULL) free(buf);
                 } else {
-                    clog(CLOG_DEBUG, "Client closed connection (fd=%d, slot %d, status %d, %zu bytes)", client->socket.fd, client->idx, status, len);
+                    clog(CLOG_DEBUG, "Client closed connection (fd=%d, slot %d, status %d, %zu bytes)", client->socket.fd, client->idx, status, len);    
+                    if (buf != NULL) free(buf);
                 }
                 free(buf);
                 server_remove_client(client->serv, *client);
