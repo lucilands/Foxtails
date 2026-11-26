@@ -46,15 +46,15 @@ void *worker_loop(void *arg) {
         }
 
         unsigned int idx = queue->head;
-        queue->data[idx].lock = true;
-        queue->data[idx].exists = false;
         queue->head = (queue->head + 1) % queue->capacity;
         queue->count--;
 
         clog(CLOG_TRACE, "Worker %u picked up action type=%d (queue depth now %u)", worker_id, queue->data[idx].type, queue->count);
-        worker_callback(queue->data[idx].payload, queue->data[idx].type);
-        queue->data[idx].lock = false;
+        
+        worker_action_t action = queue->data[idx];
         pthread_mutex_unlock(&queue->lock);
+
+        worker_callback(action.payload, action.type);
         cpool_restore();
     }
 
@@ -167,8 +167,6 @@ void dispatch_command(worker_pool_t *pool, int action, void *payload, size_t pay
 
     unsigned int tail = (pool->queue->head + pool->queue->count) % pool->queue->capacity;
     worker_action_t *slot = &pool->queue->data[tail];
-    slot->exists = true;
-    slot->lock = false;
     slot->type = action;
     if (payload && payload_size > 0) {
         memcpy(slot->payload, payload, payload_size);

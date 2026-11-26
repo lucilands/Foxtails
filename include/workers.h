@@ -14,8 +14,6 @@ enum {
 };
 
 typedef struct {
-    bool lock;
-    bool exists;
     int type;    // Value from WORKER_ACTION_* enum
     unsigned char payload[WORKER_ACTION_PAYLOAD_SIZE];
 } worker_action_t;
