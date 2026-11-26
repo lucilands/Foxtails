@@ -1,4 +1,4 @@
-CFLAGS=-Wall -Wextra -std=gnu99 -Iinclude -MMD -MP -flto -Og -g -Werror -march=native -fno-fast-math -fsigned-zeros -ffp-contract=on -fno-strict-aliasing -fno-omit-frame-pointer
+CFLAGS=-Wall -Wextra -std=gnu99 -Iinclude -MMD -MP -flto -O2 -Werror -march=native -fno-fast-math -fsigned-zeros -ffp-contract=on -fno-strict-aliasing -fno-omit-frame-pointer
 LDFLAGS=-lpthread
 
 UTILS_OBJ:=utils/sockets.o\

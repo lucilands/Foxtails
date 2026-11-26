@@ -46,7 +46,7 @@ server_t server_init_http(int max_connections, int num_workers, int port);
 server_t server_init_unix(int max_connections, int num_workers, char *path);
 void server_delete(server_t server);
 
-void server_append_client(server_t *server, socket_t client, time_t retry_at);
+void server_append_client(server_t *server, socket_t client);
 void server_remove_client(server_t *server, client_t client);
 
 #endif //__SERVER_H

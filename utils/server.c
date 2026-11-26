@@ -4,6 +4,7 @@
 #include <clog.h>
 #include <cpool.h>
 
+#include <sys/socket.h>
 #include <unistd.h>
 #include <sys/epoll.h>
 #include <arpa/inet.h>
@@ -16,6 +17,7 @@
 
 //TODO: Move this into a config
 #define MINIMUM_STALE_TIME 5
+#define MAX_RECV_SHUTDOWN (64 * 1024)
 
 bool int_stack_push(int_stack_t *stack, int value) {
     if (stack->head >= stack->capacity) {
@@ -98,15 +100,17 @@ server_t server_init_unix(int max_connections, int num_workers, char *path) {
     return server_init_common(max_connections, num_workers, sock);
 }
 
-void server_append_client(server_t *server, socket_t client, time_t retry_at) {
+void server_append_client(server_t *server, socket_t client) {
     pthread_mutex_lock(&server->free_list.lock);
     int free_idx = int_stack_pop(&server->free_list);
     if (free_idx < 0) {
         client_t *oldest_client = NULL;
         time_t now = time(NULL);
+        time_t oldest_last_recv = now;
         for (size_t i = 0; i < server->free_list.capacity; i++) {
             client_t *c = &server->clients[i];
             if (c->in_flight || !c->is_alive) continue;
+            if (c->last_recv < oldest_last_recv) oldest_last_recv = c->last_recv;
             if (now - c->last_recv < MINIMUM_STALE_TIME) continue;
 
             if (oldest_client == NULL) {
@@ -126,7 +130,7 @@ void server_append_client(server_t *server, socket_t client, time_t retry_at) {
             free_idx = oldest_client->idx;
         }
         else {
-            time_t retry_in = retry_at - time(NULL);
+            time_t retry_in = oldest_last_recv + MINIMUM_STALE_TIME - time(NULL);
             if (retry_in < 1) retry_in = 1;
             char retry_buf[32];
             snprintf(retry_buf, sizeof(retry_buf), "%lld", (long long)retry_in);
@@ -136,11 +140,20 @@ void server_append_client(server_t *server, socket_t client, time_t retry_at) {
                 .reason = "Service Unavailable",
                 .body = "Service Unavailable",
                 .body_len = sizeof("Service Unavailable") - 1,
-                .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 },
+                .headers = { .items = {{"Content-Type", "text/plain"}, {"Connection", "close"}}, .len = 2 },
             };
             http_set_header(&resp, "Retry-After", retry_buf);
             http_send_response(client.fd, resp, 0);
     
+            shutdown(client.fd, SHUT_WR);
+
+            char buf[1024];
+            size_t drained = 0;
+            ssize_t n;
+            while (drained < MAX_RECV_SHUTDOWN &&
+                   (n = recv(client.fd, buf, sizeof(buf), MSG_DONTWAIT)) > 0) {
+                drained += (size_t)n;
+            }
             close(client.fd);
             free(client.address);
             clog(CLOG_DEBUG, "Client pool exhausted (capacity=%u); rejecting fd=%d with 503 (Retry-After: %llds)",
