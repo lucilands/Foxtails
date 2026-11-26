@@ -95,11 +95,12 @@ server_t server_init_unix(int max_connections, int num_workers, char *path) {
     return server_init_common(max_connections, num_workers, sock);
 }
 
-void server_append_client(server_t *server, socket_t client, time_t oldest_client) {
+void server_append_client(server_t *server, socket_t client, time_t retry_at) {
     pthread_mutex_lock(&server->free_list.lock);
     int free_idx = int_stack_pop(&server->free_list);
     if (free_idx < 0) {
-        time_t retry_in = time(NULL) - oldest_client;
+        time_t retry_in = retry_at - time(NULL);
+        if (retry_in < 1) retry_in = 1;
         char retry_buf[32];
         snprintf(retry_buf, sizeof(retry_buf), "%lld", (long long)retry_in);
 
@@ -111,8 +112,6 @@ void server_append_client(server_t *server, socket_t client, time_t oldest_clien
             .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 },
         };
         http_set_header(&resp, "Retry-After", retry_buf);
-        // Sent from the accept loop while holding the free-list lock: never
-        // wait for a slow client here, just send what fits and move on.
         http_send_response(client.fd, resp, 0);
 
         close(client.fd);

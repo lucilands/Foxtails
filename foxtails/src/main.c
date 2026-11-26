@@ -113,6 +113,7 @@ int main(void) {
 
         if (time(NULL) != last_idle_scan) {
             last_idle_scan = time(NULL);
+            oldest_timestamp = time(NULL);
             for (int i = 0; i < max_connections; i++) {
                 pthread_mutex_lock(&server.free_list.lock);
                 client_t snapshot = server.clients[i];
@@ -127,7 +128,7 @@ int main(void) {
                     server_remove_client(&server, snapshot);
                     continue;
                 }
-                oldest_timestamp = time(NULL);
+                if (snapshot.last_recv < oldest_timestamp) oldest_timestamp = snapshot.last_recv;
             }
         }
 
@@ -140,15 +141,9 @@ int main(void) {
                 pthread_mutex_unlock(&server.free_list.lock);
                 dispatch_client(&server.workers, client);
             } else {
-                pthread_mutex_lock(&server.free_list.lock);
-                unsigned int free_head = server.free_list.head;
-                pthread_mutex_unlock(&server.free_list.lock);
-                if (free_head <= 0) {
-                    continue;
-                }
                 socket_t client;
                 while (socket_accept(server.socket, &client)) {
-                    server_append_client(&server, client, oldest_timestamp);
+                    server_append_client(&server, client, oldest_timestamp + keep_alive_timeout);
                 }
             }
         }

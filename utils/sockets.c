@@ -58,7 +58,7 @@ socket_t socket_create_http(int port) {
 }
 
 void socket_listen(socket_t sock, worker_pool_t worker_pool) {
-    if (listen(sock.fd, worker_pool.num_workers) < 0) {
+    if (listen(sock.fd, SOMAXCONN) < 0) {
         clog(CLOG_FATAL, "Listen failed: %s", strerror(errno));
         exit(1);
     }
