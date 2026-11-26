@@ -14,6 +14,9 @@
 #include <string.h>
 
 
+//TODO: Move this into a config
+#define MINIMUM_STALE_TIME 5
+
 bool int_stack_push(int_stack_t *stack, int value) {
     if (stack->head >= stack->capacity) {
         clog(CLOG_ERROR, "Free list overflow: attempted to push past capacity %u", stack->capacity);
@@ -25,7 +28,7 @@ bool int_stack_push(int_stack_t *stack, int value) {
 
 int int_stack_pop(int_stack_t *stack) {
     if (stack->head == 0) {
-        clog(CLOG_WARNING, "Free list exhausted: no free client slots available");
+        clog(CLOG_DEBUG, "Free list exhausted: no free client slots available");
         return -1;
     }
     return stack->data[--stack->head];
@@ -99,34 +102,60 @@ void server_append_client(server_t *server, socket_t client, time_t retry_at) {
     pthread_mutex_lock(&server->free_list.lock);
     int free_idx = int_stack_pop(&server->free_list);
     if (free_idx < 0) {
-        time_t retry_in = retry_at - time(NULL);
-        if (retry_in < 1) retry_in = 1;
-        char retry_buf[32];
-        snprintf(retry_buf, sizeof(retry_buf), "%lld", (long long)retry_in);
+        client_t *oldest_client = NULL;
+        time_t now = time(NULL);
+        for (size_t i = 0; i < server->free_list.capacity; i++) {
+            client_t *c = &server->clients[i];
+            if (c->in_flight || !c->is_alive) continue;
+            if (now - c->last_recv < MINIMUM_STALE_TIME) continue;
 
-        http_t resp = (http_t) {
-            .code = 503,
-            .reason = "Service Unavailable",
-            .body = "Service Unavailable",
-            .body_len = sizeof("Service Unavailable") - 1,
-            .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 },
-        };
-        http_set_header(&resp, "Retry-After", retry_buf);
-        http_send_response(client.fd, resp, 0);
+            if (oldest_client == NULL) {
+                oldest_client = c;
+                continue;
+            }
+            if (c->last_recv < oldest_client->last_recv) oldest_client = c;
+        }
+        if (oldest_client) {
+            if (epoll_ctl(server->epoll_instance, EPOLL_CTL_DEL, oldest_client->socket.fd, NULL)) {
+                clog(CLOG_WARNING, "Failed to unregister fd=%d from epoll: %s", oldest_client->socket.fd, strerror(errno));
+            }
+            close(oldest_client->socket.fd);
+            free(oldest_client->socket.address);
+            clog(CLOG_DEBUG, "Evicting oldest client. fd=%d from slot %d", oldest_client->socket.fd, oldest_client->idx);
+            server->clients[oldest_client->idx].is_alive = false;
+            free_idx = oldest_client->idx;
+        }
+        else {
+            time_t retry_in = retry_at - time(NULL);
+            if (retry_in < 1) retry_in = 1;
+            char retry_buf[32];
+            snprintf(retry_buf, sizeof(retry_buf), "%lld", (long long)retry_in);
 
-        close(client.fd);
-        free(client.address);
-        clog(CLOG_WARNING, "Client pool exhausted (capacity=%u); rejecting fd=%d with 503 (Retry-After: %llds)",
-             server->free_list.capacity, client.fd, (long long)retry_in);
-        pthread_mutex_unlock(&server->free_list.lock);
-        return;
+            http_t resp = (http_t) {
+                .code = 503,
+                .reason = "Service Unavailable",
+                .body = "Service Unavailable",
+                .body_len = sizeof("Service Unavailable") - 1,
+                .headers = { .items = {{"Content-Type", "text/plain"}}, .len = 1 },
+            };
+            http_set_header(&resp, "Retry-After", retry_buf);
+            http_send_response(client.fd, resp, 0);
+    
+            close(client.fd);
+            free(client.address);
+            clog(CLOG_DEBUG, "Client pool exhausted (capacity=%u); rejecting fd=%d with 503 (Retry-After: %llds)",
+                 server->free_list.capacity, client.fd, (long long)retry_in);
+            pthread_mutex_unlock(&server->free_list.lock);
+            return;
+        }
     }
 
     server->clients[free_idx] = (client_t) {
         .socket = client,
         .last_recv = time(NULL),
         .serv = server,
-        .idx = free_idx
+        .idx = free_idx,
+        .iter_created = server->loop_count
     };
     if (!inet_ntop(AF_INET, &((struct sockaddr_in*)client.address)->sin_addr, server->clients[free_idx].ip_addr, sizeof(server->clients[free_idx].ip_addr))) {
         clog(CLOG_WARNING, "Failed to format client address for fd=%d: %s", client.fd, strerror(errno));

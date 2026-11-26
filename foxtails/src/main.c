@@ -99,6 +99,7 @@ int main(void) {
     while (running) {
         int num_events = epoll_wait(server.epoll_instance, events, maxevents, 1000);
         int foxctl_cmd = foxctl_fetch_cmd(10);
+        server.loop_count++;
         switch (foxctl_cmd) {
             case FOXCTL_NONE: break;
             case FOXCTL_STOP: running = false; break;
@@ -135,6 +136,8 @@ int main(void) {
         for (int i = 0; i < num_events; i++) {
             if (events[i].data.ptr) {
                 client_t *client = events[i].data.ptr;
+                if (client->iter_created == server.loop_count ||
+                        !client->is_alive) continue;
                 clog(CLOG_DEBUG, "Data ready on fd=%d (slot %d). Dispatching to worker", client->socket.fd, client->idx);
                 pthread_mutex_lock(&server.free_list.lock);
                 client->in_flight = true;

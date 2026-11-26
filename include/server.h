@@ -17,6 +17,7 @@ typedef struct client {
     bool is_alive;
     bool in_flight;
     char ip_addr[INET_ADDRSTRLEN];
+    size_t iter_created;
 } client_t;
 
 typedef struct {
@@ -37,6 +38,8 @@ typedef struct server {
     int epoll_instance;
     
     int_stack_t free_list;
+
+    size_t loop_count;
 } server_t;
 
 server_t server_init_http(int max_connections, int num_workers, int port);
