@@ -7,10 +7,14 @@ mode=$1
 
 case "$mode" in
     stop)
-        echo -n "SHUTDOWN" | nc -U $foxctl_path
+        echo -n "SHUTDOWN" | nc -U "$foxctl_path"
         ;;
     shutdown)
-        echo -n "SHUTDOWN" | nc -U $foxctl_path
+        echo -n "SHUTDOWN" | nc -U "$foxctl_path"
+        ;;
+
+    reload)
+        echo -n "RELOAD" | nc -U "$foxctl_path"
         ;;
 
     *)

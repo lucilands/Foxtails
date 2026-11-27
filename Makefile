@@ -29,6 +29,7 @@ include foxfang/foxfang.make
 
 $(IN_OUT): $(BINDIR)/%: %.in Makefile
 	sed -e '' $(foreach v,$(call subst_vars,$<),-e 's|{$(v)}|$($(v))|g') $< > $@
+	shellcheck $@
 	chmod +x $@
 
 $(UTILS_OBJ):%.o: %.c
